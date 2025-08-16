@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Voice Conversational Form Agent</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header>
+    <h1>Voice Conversational Form Agent</h1>
+    <div class="status">
+      <span id="server-status">Backend: unknown</span>
+      <span id="session-label">Session: <code id="session-id"></code></span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- Left: Session + Schema -->
+    <section>
+      <h2>1) Start / Reset</h2>
+
+      <label>Backend Base URL</label>
+      <input id="base-url" value="http://localhost:8000" />
+
+      <div class="row">
+        <button id="btn-new-session">New Session</button>
+        <button id="btn-reset" class="danger">Reset Session</button>
+      </div>
+
+      <h3>Dynamic Form Schema (JSON)</h3>
+      <textarea id="schema-json" rows="14" spellcheck="false">{
+  "fields": [
+    {"name":"full_name","question":"What is your full name?","type":"string","required":true},
+    {"name":"email","question":"What is your email?","type":"email","required":true},
+    {"name":"age","question":"How old are you?","type":"integer","required":true,"min":1,"max":120},
+    {"name":"dob","question":"What is your date of birth? (YYYY-MM-DD)","type":"date","required":false,"format":"%Y-%m-%d"}
+  ]
+}</textarea>
+
+      <button id="btn-start">Start Form</button>
+
+      <div class="block">
+        <div><strong>Next question:</strong></div>
+        <div id="next-q" class="mono"></div>
+      </div>
+
+      <div class="block">
+        <div><strong>Form state:</strong></div>
+        <pre id="form-state" class="mono"></pre>
+      </div>
+    </section>
+
+    <!-- Right: Conversation -->
+    <section>
+      <h2>2) Talk or Type</h2>
+
+      <div class="row">
+        <button id="btn-record">🎙️ Start Recording</button>
+        <button id="btn-stop" disabled>⏹️ Stop</button>
+        <span id="rec-status">Mic: idle</span>
+      </div>
+
+      <audio id="agent-audio" controls style="width:100%; display:none;"></audio>
+
+      <div class="input-row">
+        <input id="text-input" placeholder="Or type here and hit Send…" />
+        <button id="btn-send">Send</button>
+      </div>
+
+      <div class="block">
+        <div><strong>Transcript (from STT):</strong></div>
+        <div id="last-transcript" class="mono"></div>
+      </div>
+
+      <div class="block">
+        <div><strong>Agent reply:</strong></div>
+        <div id="agent-reply" class="mono"></div>
+      </div>
+
+      <h3>History</h3>
+      <div id="history" class="history"></div>
+    </section>
+  </main>
+
+  <footer>
+    <small>Tip: you can correct fields by saying things like “change email to om@ddu.ac.in”.</small>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>
