@@ -1,7 +1,9 @@
 import React from 'react';
+
 export default function FormSide({ formData, setFormData, handleSubmit }) {
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   return (
@@ -13,7 +15,7 @@ export default function FormSide({ formData, setFormData, handleSubmit }) {
           <input
             name="fullName"
             type="text"
-            value={formData.fullName}
+            value={formData.fullName || ''}
             onChange={handleChange}
             required
             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
@@ -24,7 +26,7 @@ export default function FormSide({ formData, setFormData, handleSubmit }) {
           <input
             name="email"
             type="email"
-            value={formData.email}
+            value={formData.email || ''}
             onChange={handleChange}
             required
             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
@@ -35,7 +37,7 @@ export default function FormSide({ formData, setFormData, handleSubmit }) {
           <input
             name="phone"
             type="text"
-            value={formData.phone}
+            value={formData.phone || ''}
             onChange={handleChange}
             required
             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
@@ -46,7 +48,7 @@ export default function FormSide({ formData, setFormData, handleSubmit }) {
           <input
             name="dob"
             type="date"
-            value={formData.dob}
+            value={formData.dob || ''}
             onChange={handleChange}
             required
             className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"

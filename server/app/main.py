@@ -3,64 +3,189 @@ import json
 import base64
 import tempfile
 import os
-from typing import Dict, Any, Optional
+import asyncio
+import traceback
+from typing import Dict, Any, Optional, List
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 import pyttsx3
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, validator, Field
 import logging
-
+from datetime import datetime
+import threading
+from pathlib import Path
+import uuid
 from .llm import GeminiLLM
+from .memory import memory_store, FieldStatus, MessageRole
 
-app = FastAPI(title="Conversational Form Agent (LLM-driven, Gemini)")
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('form_agent.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
-# Allow frontend origins during development
+# Form schema with metadata
+FORM_FIELDS = [
+    {
+        "name": "full_name", 
+        "type": "string", 
+        "required": True,
+        "label": "Full Name",
+        "description": "Your complete name"
+    },
+    {
+        "name": "email", 
+        "type": "email", 
+        "required": True,
+        "label": "Email Address",
+        "description": "Your email for important updates"
+    },
+    {
+        "name": "phone", 
+        "type": "string", 
+        "required": True,
+        "label": "Phone Number",
+        "description": "Your contact number"
+    },
+    {
+        "name": "dob", 
+        "type": "date", 
+        "required": True,
+        "label": "Date of Birth",
+        "description": "Your birth date (MM/DD/YYYY)"
+    },
+]
+
+# Global TTS engine with thread safety
+_tts_lock = threading.Lock()
+_tts_engine = None
+
+def get_tts_engine():
+    """Get thread-safe TTS engine instance"""
+    global _tts_engine
+    if _tts_engine is None:
+        _tts_engine = pyttsx3.init()
+        _tts_engine.setProperty("rate", 150)
+        _tts_engine.setProperty("volume", 0.9)
+    return _tts_engine
+
+def tts_to_base64_wav(text: str) -> str:
+    """Convert text to speech with robust error handling"""
+    if not text or not text.strip():
+        return ""
+    
+    # Sanitize text for TTS
+    sanitized_text = re.sub(r'[^\w\s\.,!?\-]', '', text.strip())
+    if not sanitized_text:
+        sanitized_text = "I had trouble generating audio for that response."
+    
+    temp_path = None
+    try:
+        with _tts_lock:
+            engine = get_tts_engine()
+            
+            # Create temp file with proper cleanup
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
+                temp_path = tf.name
+            
+            # Generate speech
+            engine.save_to_file(sanitized_text, temp_path)
+            engine.runAndWait()
+            
+            # Read and encode
+            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                with open(temp_path, "rb") as f:
+                    audio_data = f.read()
+                return base64.b64encode(audio_data).decode("utf-8")
+            else:
+                logger.warning("TTS generated empty file")
+                return ""
+                
+    except Exception as e:
+        logger.error(f"TTS generation failed: {e}")
+        return ""  # Return empty string instead of failing
+    finally:
+        # Clean up temp file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup TTS temp file: {cleanup_error}")
+
+# Lifespan context manager for startup/shutdown
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown"""
+    # Startup
+    logger.info("🚀 Form Agent starting up...")
+    
+    # Initialize LLM
+    try:
+        app.state.llm = GeminiLLM()
+        logger.info("✅ LLM initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize LLM: {e}")
+        raise
+    
+    # Test TTS
+    try:
+        test_audio = tts_to_base64_wav("System ready")
+        if test_audio:
+            logger.info("✅ TTS system initialized successfully")
+        else:
+            logger.warning("⚠️ TTS system may have issues")
+    except Exception as e:
+        logger.warning(f"⚠️ TTS initialization warning: {e}")
+    
+    yield
+    
+    # Shutdown
+    logger.info("🛑 Form Agent shutting down...")
+    # Cleanup if needed
+    logger.info("✅ Shutdown complete")
+
+# Create FastAPI app
+app = FastAPI(
+    title="Conversational Form Agent (Enhanced)",
+    description="Production-ready AI-powered form filling with voice interaction",
+    version="2.0.0",
+    lifespan=lifespan
+)
+
+# Enhanced CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "http://localhost:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:5174",
         "http://127.0.0.1:5174",
+        "https://*.netlify.app",
+        "https://*.vercel.app"
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Ordered form schema sent to LLM
-FORM_FIELDS = [
-    {"name": "full_name", "type": "string", "required": True},
-    {"name": "email", "type": "email", "required": True},
-    {"name": "phone", "type": "string", "required": True},
-    {"name": "dob", "type": "date", "required": True},
-]
-
-# In-memory session store
-SESSIONS: Dict[str, Dict[str, Any]] = {}
-
-def tts_to_base64_wav(text: str) -> str:
-    engine = pyttsx3.init()
-    engine.setProperty("rate", 150)
-    engine.setProperty("volume", 1.0)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
-        temp_path = tf.name
-    try:
-        engine.save_to_file(text, temp_path)
-        engine.runAndWait()
-        with open(temp_path, "rb") as f:
-            data = f.read()
-        return base64.b64encode(data).decode("utf-8")
-    finally:
-        try:
-            os.remove(temp_path)
-        except Exception:
-            pass
-
-# Pydantic models
+# Pydantic models with validation
 class ChatRequest(BaseModel):
-    session_id: str
-    message: str = ""
+    session_id: str = Field(..., min_length=1, max_length=100)
+    message: str = Field("", max_length=1000)
+    
+    @validator('session_id')
+    def validate_session_id(cls, v):
+        if not re.match(r'^[a-zA-Z0-9_-]+', v):
+            raise ValueError('Session ID must contain only alphanumeric characters, hyphens, and underscores')
+        return v
 
 class ChatResponse(BaseModel):
     action: str
@@ -68,117 +193,567 @@ class ChatResponse(BaseModel):
     ask: Optional[str] = None
     updates: Optional[Dict[str, Any]] = None
     audio_b64: Optional[str] = None
+    session_status: Optional[Dict[str, Any]] = None
+    field_focus: Optional[str] = None
+    tone: Optional[str] = None
 
 class TTSRequest(BaseModel):
-    text: str
+    text: str = Field(..., min_length=1, max_length=500)
 
 class TTSResponse(BaseModel):
     audio: str
+    success: bool = True
 
 class SubmitRequest(BaseModel):
-    full_name: str
-    email: str
-    phone: str
-    dob: str
+    session_id: str = Field(..., min_length=1)
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    dob: Optional[str] = None
 
-logger = logging.getLogger(__name__)
+class SessionInfoResponse(BaseModel):
+    session_id: str
+    created_at: float
+    last_activity: float
+    completed: bool
+    field_summary: Dict[str, Any]
+    message_count: int
+    context: Dict[str, Any]
 
-def init_session(session_id: str):
-    SESSIONS[session_id] = {
-        "form": {},
-        "messages": [],
-        "completed": False,
-    }
+# # Normalize user speech input
+# def normalize_user_text(text: str) -> str:
+#     """Enhanced text normalization for speech-to-text input"""
+#     if not text:
+#         return ""
+    
+#     s = text.strip()
+    
+#     # Email-specific corrections
+#     s = re.sub(r'\bat\s+the\s+rate\b', '@', s, flags=re.IGNORECASE)
+#     s = re.sub(r'\bat\b', '@', s, flags=re.IGNORECASE)
+#     s = re.sub(r'\bdot\s+com\b', '.com', s, flags=re.IGNORECASE)
+#     s = re.sub(r'\bdot\b', '.', s, flags=re.IGNORECASE)
+#     s = re.sub(r'\bgmail\s+com\b', 'gmail.com', s, flags=re.IGNORECASE)
+    
+#     # Phone number corrections
+#     s = re.sub(r'\b(\d)\s+(\d)\s+(\d)\b', r'\1\2\3', s)  # "1 2 3" -> "123"
+    
+#     # Date corrections
+#     s = re.sub(r'\b(\d{1,2})\s+(\d{1,2})\s+(\d{4})\b', r'\1/\2/\3', s)
+    
+#     # Collapse spelled out letters
+#     def collapse_spelled(match):
+#         letters = re.findall(r'\b[A-Za-z]\b', match.group(0))
+#         return ''.join(letters) if len(letters) <= 10 else match.group(0)
+    
+#     s = re.sub(r'(?:\b[A-Za-z]\b\s*){3,}', collapse_spelled, s)
+    
+#     # Clean up whitespace
+#     s = re.sub(r'\s+', ' ', s).strip()
+    
+#     return s
 
-def get_session(session_id: str) -> Dict[str, Any]:
-    if session_id not in SESSIONS:
-        init_session(session_id)
-    return SESSIONS[session_id]
-
-def normalize_user_text(text: str) -> str:
-    s = text or ""
-    s = re.sub(r"\bat\s+the\s+rate\b", "@", s, flags=re.IGNORECASE)
-    s = re.sub(r"\bdot\s+com\b", ".com", s, flags=re.IGNORECASE)
-    def collapse_spelled(m):
-        letters = re.findall(r"[A-Za-z]", m.group(0))
-        return "".join(letters)
-    s = re.sub(r'(?:\b[A-Za-z]\b(?:\s+)){2,}\b[A-Za-z]\b', lambda m: collapse_spelled(m), s)
-    s = re.sub(r"\s+", " ", s).strip()
+# Enhanced normalization - add this RIGHT BEFORE the llm.infer call
+def enhanced_normalize_speech(text: str) -> str:
+    """Enhanced speech-to-text normalization"""
+    if not text:
+        return ""
+    
+    s = text.strip()
+    
+    # More aggressive email corrections
+    s = re.sub(r'\bat\s+the\s+rate\b', '@', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bat\s+rate\b', '@', s, flags=re.IGNORECASE) 
+    s = re.sub(r'\bat\b', '@', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bdot\s+com\b', '.com', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bdot\s+gmail\s+com\b', '.gmail.com', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bgmail\s+dot\s+com\b', 'gmail.com', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bdot\b', '.', s, flags=re.IGNORECASE)
+    
+    # Fix common email patterns like "Om 358227 at Gmail.com" -> "Om358227@Gmail.com"
+    s = re.sub(r'(\w+)\s+(\d+)\s+at\s+([a-zA-Z]+\.com)', r'\1\2@\3', s, flags=re.IGNORECASE)
+    s = re.sub(r'(\w+)\s+(\d+)\s+at\s+the\s+rate\s+([a-zA-Z]+\.com)', r'\1\2@\3', s, flags=re.IGNORECASE)
+    
+    # Clean up whitespace
+    s = re.sub(r'\s+', ' ', s).strip()
+    
     return s
 
-llm = GeminiLLM()
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-@app.post("/reset")
-def reset(session_id: str = Query("session1")):
-    init_session(session_id)
-    return {"status": "reset", "session_id": session_id}
-
-@app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
-    sid = req.session_id
-    session = get_session(sid)
-
-    raw_user = (req.message or "").strip()
-    normalized = normalize_user_text(raw_user)
-    session["messages"].append({"role": "user", "content": normalized})
-
-    llm_out = llm.infer(FORM_FIELDS, session["form"], normalized)
-
-    if not isinstance(llm_out, dict):
-        reply_text = str(llm_out)
-        audio = tts_to_base64_wav(reply_text)
-        session["messages"].append({"role": "agent", "content": reply_text})
-        return ChatResponse(
-            action="error",
-            reply=reply_text,
-            ask=None,
-            updates=session["form"],
-            audio_b64=audio,
-        )
-
-    action = llm_out.get("action", "error")
-    updates = llm_out.get("updates") or {}
-    ask_text = llm_out.get("ask") or ""
-
-    # Apply updates directly (trust LLM for validation)
-    if updates:
-        session["form"].update(updates)
-
-    # Respond based on action
-    reply = ask_text or {
-        "ask": "Could you clarify?",
-        "set": "Okay, I've noted that.",
-        "done": f"All fields captured. Summary: {json.dumps(session['form'])}",
-        "error": "Sorry, I didn't understand. Please rephrase.",
-    }.get(action, "Sorry, I didn’t understand. Please rephrase.")
-
-    audio = tts_to_base64_wav(reply)
-    session["messages"].append({"role": "agent", "content": reply})
-
-    if action == "done":
-        session["completed"] = True
-
-    return ChatResponse(
-        action=action,
-        reply=reply,
-        ask=ask_text if action in ["ask", "set"] else None,
-        updates=session["form"],
-        audio_b64=audio,
+# Exception handlers
+@app.exception_handler(ValueError)
+async def validation_exception_handler(request: Request, exc: ValueError):
+    logger.warning(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": str(exc), "type": "validation_error"}
     )
 
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unexpected error: {exc}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "detail": "An internal server error occurred",
+            "type": "server_error",
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
+# Health check endpoints
+@app.get("/health")
+def health():
+    """Basic health check"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "version": "2.0.0"
+    }
+
+@app.get("/health/detailed")
+def detailed_health():
+    """Detailed health check with system status"""
+    try:
+        # Test LLM
+        llm_status = "healthy"
+        try:
+            if hasattr(app.state, 'llm'):
+                test_response = app.state.llm.infer_freeform("test")
+                if not test_response:
+                    llm_status = "degraded"
+        except Exception:
+            llm_status = "unhealthy"
+        
+        # Test TTS
+        tts_status = "healthy"
+        try:
+            test_audio = tts_to_base64_wav("test")
+            if not test_audio:
+                tts_status = "degraded"
+        except Exception:
+            tts_status = "unhealthy"
+        
+        # Memory stats
+        memory_stats = memory_store.get_session_stats()
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "components": {
+                "llm": llm_status,
+                "tts": tts_status,
+                "memory": "healthy"
+            },
+            "memory_stats": memory_stats
+        }
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "status": "unhealthy",
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e)
+            }
+        )
+
+# Session management
+@app.post("/reset")
+def reset_session(session_id: str = Query("session1", min_length=1)):
+    """Reset a session to initial state"""
+    try:
+        # Delete existing session
+        memory_store.delete_session(session_id)
+        
+        # Create new session
+        session = memory_store.get_or_create_session(session_id)
+        session.add_message(
+            MessageRole.SYSTEM, 
+            "Session reset - ready to collect form information"
+        )
+        
+        logger.info(f"Session {session_id} reset successfully")
+        
+        return {
+            "status": "reset",
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to reset session {session_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset session"
+        )
+
+@app.get("/session/{session_id}/info", response_model=SessionInfoResponse)
+def get_session_info(session_id: str):
+    """Get detailed session information"""
+    try:
+        session = memory_store.get_or_create_session(session_id)
+        
+        return SessionInfoResponse(
+            session_id=session.session_id,
+            created_at=session.created_at,
+            last_activity=session.last_activity,
+            completed=session.completed,
+            field_summary=session.get_field_summary(),
+            message_count=len(session.messages),
+            context=session.context.copy()
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to get session info for {session_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve session information"
+        )
+
+# Main chat endpoint
+@app.post("/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest):
+    """Enhanced chat endpoint with full context awareness"""
+    session_id = req.session_id
+    
+    try:
+        # Get or create session
+        session = memory_store.get_or_create_session(session_id)
+        
+        # Normalize user input
+        raw_message = req.message.strip()
+        normalized_message = enhanced_normalize_speech(raw_message)
+        
+        # Add user message to session
+        session.add_message(MessageRole.USER, normalized_message)
+        
+        # Determine current field if not set
+        if not session.current_field:
+            field_summary = session.get_field_summary()
+            for field in FORM_FIELDS:
+                field_name = field["name"]
+                if field_name not in field_summary or field_summary[field_name]["status"] in ["pending", "invalid"]:
+                    session.current_field = field_name
+                    break
+        
+        # Get LLM response
+        llm_response = app.state.llm.infer(FORM_FIELDS, session, normalized_message)
+        
+        # Process LLM response
+        action = llm_response.get("action", "ask")
+        updates = llm_response.get("updates", {})
+        ask_text = llm_response.get("ask", "")
+        field_focus = llm_response.get("field_focus")
+        tone = llm_response.get("tone", "professional")
+
+        # *** ADD THIS ENHANCED UPDATE LOGIC ***
+        # Apply field updates with better tracking
+        for field_name, value in updates.items():
+            if value and value.strip():
+                session.update_field(field_name, value, FieldStatus.COLLECTED)
+                logger.info(f"Updated field {field_name} = {value}")
+
+        # ENHANCED DOB PROCESSING - Parse natural date formats
+        if 'dob' in updates or any('december' in msg.get('content', '').lower() for msg in session.get_conversation_context(3) if msg.get('role') == 'user'):
+            recent_user_messages = [msg['content'] for msg in session.get_conversation_context(5) if msg.get('role') == 'user']
+            
+            # Combine recent messages to extract complete DOB
+            combined_text = ' '.join(recent_user_messages).lower()
+            
+            # Extract DOB patterns
+            import calendar
+            month_names = {month.lower(): idx for idx, month in enumerate(calendar.month_name[1:], 1)}
+            month_abbrev = {month.lower(): idx for idx, month in enumerate(calendar.month_abbr[1:], 1)}
+            all_months = {**month_names, **month_abbrev}
+            
+            # Look for "22nd December" + "2004" pattern
+            day_match = re.search(r'(\d{1,2})(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', combined_text)
+            year_match = re.search(r'\b(19|20)\d{2}\b', combined_text)
+            
+            if day_match and year_match:
+                day = int(day_match.group(1))
+                month_name = day_match.group(3).lower()
+                year = int(year_match.group(0))
+                
+                month = all_months.get(month_name, 0)
+                if month and 1 <= day <= 31 and 1900 <= year <= 2025:
+                    formatted_dob = f"{year}-{month:02d}-{day:02d}"
+                    session.update_field('dob', formatted_dob, FieldStatus.COLLECTED)
+                    updates['dob'] = formatted_dob
+                    logger.info(f"Auto-assembled DOB: {formatted_dob}")
+            
+        # AUTO-DETECT missing updates from conversation context
+        # Check if user provided data that wasn't captured
+        recent_messages = session.get_conversation_context(3)
+        if len(recent_messages) >= 2:
+            last_user_msg = next((msg for msg in reversed(recent_messages) if msg['role'] == 'user'), None)
+            if last_user_msg:
+                user_text = last_user_msg['content'].lower()
+                
+                # Auto-detect DOB patterns that might have been missed
+                dob_patterns = [
+                    r'(\d{1,2})\s*(st|nd|rd|th)?\s*(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*(\d{4})',
+                    r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})',
+                    r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s*(\d{4})'
+                ]
+                
+                for pattern in dob_patterns:
+                    match = re.search(pattern, user_text, re.IGNORECASE)
+                    if match and 'dob' not in updates:
+                        # Extract and format date
+                        if '/' in user_text or '-' in user_text:
+                            dob_match = re.search(r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})', user_text)
+                            if dob_match:
+                                month, day, year = dob_match.groups()
+                                formatted_dob = f"{int(month):02d}/{int(day):02d}/{year}"
+                                session.update_field('dob', formatted_dob, FieldStatus.COLLECTED)
+                                updates['dob'] = formatted_dob
+                                logger.info(f"Auto-detected DOB: {formatted_dob}")
+                        break
+        
+        # Apply field updates
+        for field_name, value in updates.items():
+            session.update_field(field_name, value, FieldStatus.COLLECTED)
+        
+        # Update current field
+        if field_focus:
+            session.current_field = field_focus
+        
+        # Handle different actions
+        reply_text = ask_text
+        if not reply_text:
+            default_replies = {
+                "ask": "Could you help me with that information?",
+                "set": "Got it, thanks!",
+                "done": "Perfect! I have all the information I need.",
+                "clarify": "Let me clarify that for you.",
+                "skip": "No problem, let's move on.",
+                "error": "I didn't quite catch that. Could you try again?"
+            }
+            reply_text = default_replies.get(action, "How can I help you?")
+        
+        # Update session context based on interaction
+        if action == "error":
+            session.context["consecutive_errors"] = session.context.get("consecutive_errors", 0) + 1
+            if session.context["consecutive_errors"] >= 3:
+                session.increment_frustration()
+        else:
+            session.context["consecutive_errors"] = 0
+            if action in ["set", "done"]:
+                session.reset_frustration()
+        
+        # Generate audio
+        audio_b64 = ""
+        if reply_text:
+            try:
+                audio_b64 = tts_to_base64_wav(reply_text)
+            except Exception as e:
+                logger.warning(f"TTS generation failed: {e}")
+                # Continue without audio rather than failing
+        
+        # Add agent response to session
+        session.add_message(MessageRole.AGENT, reply_text)
+        
+        # Check if form is complete
+        if action == "done":
+            session.completed = True
+            session.context["conversation_phase"] = "completed"
+        
+        # Build response
+        response = ChatResponse(
+            action=action,
+            reply=reply_text,
+            ask=ask_text if ask_text else None,
+            updates=session.get_field_summary(),
+            audio_b64=audio_b64,
+            session_status={
+                "completed": session.completed,
+                "current_field": session.current_field,
+                "frustration_level": session.context.get("user_frustration_level", 0)
+            },
+            field_focus=field_focus,
+            tone=tone
+        )
+        
+        logger.info(f"Chat processed for session {session_id}: action={action}")
+        return response
+        
+    except Exception as e:
+        logger.error(f"Chat processing failed for session {session_id}: {e}\n{traceback.format_exc()}")
+        
+        # Return graceful error response
+        error_reply = "I'm having a technical issue. Could you please try again?"
+        error_audio = ""
+        try:
+            error_audio = tts_to_base64_wav(error_reply)
+        except Exception:
+            pass
+        
+        return ChatResponse(
+            action="error",
+            reply=error_reply,
+            audio_b64=error_audio,
+            session_status={"completed": False, "current_field": None, "frustration_level": 0}
+        )
+
+# Standalone TTS endpoint
 @app.post("/tts", response_model=TTSResponse)
-def tts(req: TTSRequest):
+async def text_to_speech(req: TTSRequest):
+    """Convert text to speech"""
     try:
         audio_b64 = tts_to_base64_wav(req.text)
-        return TTSResponse(audio=audio_b64)
+        return TTSResponse(audio=audio_b64, success=bool(audio_b64))
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"TTS conversion failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Text-to-speech conversion failed"
+        )
 
+# Form submission endpoint
 @app.post("/submit")
-async def submit_form(req: SubmitRequest):
-    logger.info(f"Form submitted: {req.dict()}")
-    return {"status": "ok", "data": req.dict()}
+async def submit_form(req: SubmitRequest, background_tasks: BackgroundTasks):
+    """Submit completed form data"""
+    try:
+        session = memory_store.get_or_create_session(req.session_id)
+        
+        # Get current field values from session
+        field_summary = session.get_field_summary()
+        
+        # Build submission data
+        submission_data = {
+            "session_id": req.session_id,
+            "submitted_at": datetime.now().isoformat(),
+            "fields": {}
+        }
+        
+        # Include all collected fields
+        for field in FORM_FIELDS:
+            field_name = field["name"]
+            if field_name in field_summary and field_summary[field_name]["value"]:
+                submission_data["fields"][field_name] = field_summary[field_name]["value"]
+        
+        # Override with any explicitly provided values
+        for field_name in ["full_name", "email", "phone", "dob"]:
+            value = getattr(req, field_name, None)
+            if value:
+                submission_data["fields"][field_name] = value
+        
+        # Mark session as completed
+        session.completed = True
+        session.context["conversation_phase"] = "completed"
+        
+        # Log submission (in production, save to database)
+        logger.info(f"Form submitted for session {req.session_id}: {json.dumps(submission_data, indent=2)}")
+        
+        # Background task for additional processing
+        def process_submission(data):
+            # Here you could:
+            # - Save to database
+            # - Send confirmation email
+            # - Trigger webhooks
+            # - Analytics tracking
+            logger.info(f"Background processing for submission: {data['session_id']}")
+        
+        background_tasks.add_task(process_submission, submission_data)
+        
+        return {
+            "status": "success",
+            "message": "Form submitted successfully",
+            "submission_id": f"sub_{req.session_id}_{int(datetime.now().timestamp())}",
+            "data": submission_data,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Form submission failed: {e}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Form submission failed"
+        )
+
+# Admin endpoints
+@app.get("/admin/sessions")
+def list_sessions(limit: int = Query(50, ge=1, le=100)):
+    """List all active sessions (admin only)"""
+    try:
+        sessions_info = []
+        for session_id, session in list(memory_store.sessions.items())[:limit]:
+            sessions_info.append({
+                "session_id": session_id,
+                "created_at": session.created_at,
+                "last_activity": session.last_activity,
+                "completed": session.completed,
+                "message_count": len(session.messages),
+                "fields_collected": len([f for f in session.fields.values() if f.status == FieldStatus.COLLECTED])
+            })
+        
+        return {
+            "sessions": sessions_info,
+            "total_count": len(memory_store.sessions),
+            "stats": memory_store.get_session_stats()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to list sessions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve sessions"
+        )
+
+@app.delete("/admin/sessions/cleanup")
+def cleanup_expired_sessions():
+    """Clean up expired sessions"""
+    try:
+        cleaned_count = memory_store.cleanup_expired_sessions()
+        return {
+            "status": "success",
+            "cleaned_sessions": cleaned_count,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Session cleanup failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Session cleanup failed"
+        )
+
+# Export session data
+@app.get("/admin/sessions/{session_id}/export")
+def export_session(session_id: str):
+    """Export complete session data"""
+    try:
+        session_data = memory_store.export_session(session_id)
+        if not session_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        return {
+            "status": "success",
+            "session_data": session_data,
+            "exported_at": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Session export failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Session export failed"
+        )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
