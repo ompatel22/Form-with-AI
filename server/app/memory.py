@@ -1,28 +1,22 @@
-from typing import Dict, Any
-import copy
+# memory.py
 
 class MemoryStore:
     def __init__(self):
-        self._sessions: Dict[str, Dict[str, Any]] = {}
+        self.sessions = {}
 
-    def init_session(self, session_id: str, schema: dict):
-        self._sessions[session_id] = {
-            "schema": schema,
-            "index": 0,
-            "form": {},
-            "completed": False,
-        }
+    def add_message(self, session_id: str, role: str, content: str):
+        """Add a message to a session. Create session if not exists."""
+        if session_id not in self.sessions:
+            self.sessions[session_id] = []
 
-    def require(self, session_id: str) -> Dict[str, Any]:
-        if session_id not in self._sessions:
-            raise KeyError(f"Session {session_id} not found.")
-        return self._sessions[session_id]
+        self.sessions[session_id].append({"role": role, "content": content})
 
-    def get_state(self, session_id: str) -> Dict[str, Any]:
-        return copy.deepcopy(self.require(session_id))
+    def get_messages(self, session_id: str):
+        """Get all messages in a session."""
+        if session_id not in self.sessions:
+            return []
+        return self.sessions[session_id]
 
-    def save(self, session_id: str, state: Dict[str, Any]):
-        self._sessions[session_id] = copy.deepcopy(state)
-
-    def reset(self, session_id: str):
-        self._sessions.pop(session_id, None)
+    def clear(self):
+        """Clear all sessions."""
+        self.sessions = {}

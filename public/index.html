@@ -2,91 +2,198 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Voice Conversational Form Agent</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="./style.css" />
+  <title>Conversational Form Agent</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; margin:20px; }
+    #container { display: flex; gap:20px; }
+    #form-side, #chat-side { flex:1; }
+    #form-side { border:1px solid #ccc; padding:15px; border-radius:8px; background:#fefefe; }
+    #chat { border:1px solid #ccc; padding:12px; height:420px; overflow:auto; background:#fafafa; }
+    .msg { margin:8px 0; padding:8px 12px; border-radius:8px; max-width:80%; }
+    .user { background:#d2f1d8; margin-left:auto; text-align:left; }
+    .agent { background:#eef0ff; margin-right:auto; text-align:left; }
+    #controls { margin-top:10px; display:flex; gap:8px; }
+    #text { flex:1; padding:8px; }
+    button { padding:8px 12px; cursor:pointer; }
+    #audio-enable { display:none; margin-left:10px; background:#f0ad4e; color:#000; }
+    #status { color:#666; margin-top:6px; }
+    input, select { width:100%; padding:6px; margin:5px 0 12px 0; }
+  </style>
 </head>
 <body>
-  <header>
-    <h1>Voice Conversational Form Agent</h1>
-    <div class="status">
-      <span id="server-status">Backend: unknown</span>
-      <span id="session-label">Session: <code id="session-id"></code></span>
+  <h1>Student Registration — Conversational Agent</h1>
+
+  <div id="container">
+    <!-- LEFT SIDE FORM -->
+    <div id="form-side">
+      <h2>Form</h2>
+      <form id="regForm">
+        <label>Full Name</label>
+        <input id="fullName" name="fullName" type="text" required />
+
+        <label>Email</label>
+        <input id="email" name="email" type="email" required />
+
+        <label>Phone Number</label>
+        <input id="phone" name="phone" type="text" required />
+
+        <label>Date of Birth</label>
+        <input id="dob" name="dob" type="date" required />
+
+        <button type="submit">Submit</button>
+      </form>
     </div>
-  </header>
 
-  <main class="grid">
-    <!-- Left: Session + Schema -->
-    <section>
-      <h2>1) Start / Reset</h2>
-
-      <label>Backend Base URL</label>
-      <input id="base-url" value="http://localhost:8000" />
-
-      <div class="row">
-        <button id="btn-new-session">New Session</button>
-        <button id="btn-reset" class="danger">Reset Session</button>
+    <!-- RIGHT SIDE CHAT -->
+    <div id="chat-side">
+      <div id="chat"></div>
+      <div id="controls">
+        <input id="text" placeholder="Type your answer..." />
+        <button id="send">Send</button>
+        <button id="mic">🎙️ Mic</button>
+        <button id="audio-enable">🔊 Enable audio</button>
       </div>
+      <div id="status">Status: <span id="stat">idle</span></div>
+    </div>
+  </div>
 
-      <h3>Dynamic Form Schema (JSON)</h3>
-      <textarea id="schema-json" rows="14" spellcheck="false">{
-  "fields": [
-    {"name":"full_name","question":"What is your full name?","type":"string","required":true},
-    {"name":"email","question":"What is your email?","type":"email","required":true},
-    {"name":"age","question":"How old are you?","type":"integer","required":true,"min":1,"max":120},
-    {"name":"dob","question":"What is your date of birth? (YYYY-MM-DD)","type":"date","required":false,"format":"%Y-%m-%d"}
-  ]
-}</textarea>
+  <script>
+  const API = "http://127.0.0.1:8000";
+  const sessionId = "session1";
 
-      <button id="btn-start">Start Form</button>
+  const chat = document.getElementById("chat");
+  const input = document.getElementById("text");
+  const sendBtn = document.getElementById("send");
+  const micBtn = document.getElementById("mic");
+  const stat = document.getElementById("stat");
+  const audioEnableBtn = document.getElementById("audio-enable");
 
-      <div class="block">
-        <div><strong>Next question:</strong></div>
-        <div id="next-q" class="mono"></div>
-      </div>
+  // Form fields
+  const fullNameInput = document.getElementById("fullName");
+  const emailInput = document.getElementById("email");
+  const phoneInput = document.getElementById("phone");
+  const dobInput = document.getElementById("dob");
+  const form = document.getElementById("regForm");
 
-      <div class="block">
-        <div><strong>Form state:</strong></div>
-        <pre id="form-state" class="mono"></pre>
-      </div>
-    </section>
+  let pendingAudio = null;
+  let userInteracted = false;
 
-    <!-- Right: Conversation -->
-    <section>
-      <h2>2) Talk or Type</h2>
+  function addMessage(text, who) {
+    const d = document.createElement("div");
+    d.className = "msg " + (who === "user" ? "user" : "agent");
+    d.textContent = text;
+    chat.appendChild(d);
+    chat.scrollTop = chat.scrollHeight;
+  }
 
-      <div class="row">
-        <button id="btn-record">🎙️ Start Recording</button>
-        <button id="btn-stop" disabled>⏹️ Stop</button>
-        <span id="rec-status">Mic: idle</span>
-      </div>
+  function b64ToBlob(b64, mime) {
+    const bytes = atob(b64);
+    const arr = new Uint8Array(bytes.length);
+    for (let i=0;i<bytes.length;i++) arr[i]=bytes.charCodeAt(i);
+    return new Blob([arr], {type:mime});
+  }
 
-      <audio id="agent-audio" controls style="width:100%; display:none;"></audio>
+  async function playBase64WavOrFallback(b64, text) {
+    if (!b64 && text) { speakText(text); return; }
+    if (!b64) return;
+    const blob = b64ToBlob(b64,"audio/wav");
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    try {
+      await audio.play();
+      pendingAudio=null;
+    } catch(err) {
+      pendingAudio = {b64, text};
+      audioEnableBtn.style.display="inline-block";
+      if (text) speakText(text);
+    }
+  }
 
-      <div class="input-row">
-        <input id="text-input" placeholder="Or type here and hit Send…" />
-        <button id="btn-send">Send</button>
-      </div>
+  function speakText(t) {
+    if (!t || !('speechSynthesis' in window)) return;
+    const u=new SpeechSynthesisUtterance(t); u.lang="en-US";
+    window.speechSynthesis.speak(u);
+  }
 
-      <div class="block">
-        <div><strong>Transcript (from STT):</strong></div>
-        <div id="last-transcript" class="mono"></div>
-      </div>
+  async function backendChat(msg) {
+    stat.textContent="waiting...";
+    try {
+      const res=await fetch(API+"/chat", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({session_id:sessionId,message:msg})
+      });
+      const data=await res.json();
+      stat.textContent="idle";
+      if(data.reply) addMessage(data.reply,"agent");
+      await playBase64WavOrFallback(data.audio_b64,data.reply);
 
-      <div class="block">
-        <div><strong>Agent reply:</strong></div>
-        <div id="agent-reply" class="mono"></div>
-      </div>
+      // ✅ Auto-fill form fields if updates come from backend
+      if (data.updates) {
+        if (data.updates.full_name) fullNameInput.value = data.updates.full_name;
+        if (data.updates.email) emailInput.value = data.updates.email;
+        if (data.updates.phone) phoneInput.value = data.updates.phone;
+        if (data.updates.dob) dobInput.value = data.updates.dob;
+      }
 
-      <h3>History</h3>
-      <div id="history" class="history"></div>
-    </section>
-  </main>
+      return data;
+    } catch(err) {
+      console.error("Chat error:",err);
+      stat.textContent="error";
+      addMessage("Error: "+err,"agent");
+    }
+  }
 
-  <footer>
-    <small>Tip: you can correct fields by saying things like “change email to om@ddu.ac.in”.</small>
-  </footer>
+  async function start() {
+    await fetch(API+"/reset?session_id="+sessionId,{method:"POST"});
+    await backendChat("");
+  }
 
-  <script src="./app.js"></script>
+  sendBtn.addEventListener("click",async()=>{
+    const t=input.value.trim(); if(!t) return;
+    addMessage(t,"user"); input.value="";
+    await backendChat(t);
+  });
+
+  input.addEventListener("keydown",(e)=>{if(e.key==="Enter")sendBtn.click();});
+
+  micBtn.addEventListener("click",()=>{
+    const Rec=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!Rec){alert("No speech recognition");return;}
+    const rec=new Rec(); rec.lang="en-US"; rec.interimResults=false;
+    stat.textContent="listening";
+    rec.onresult=(e)=>{
+      const t=e.results[0][0].transcript;
+      addMessage(t,"user");
+      backendChat(t);
+    };
+    rec.onend=()=>{stat.textContent="idle";};
+    rec.start();
+  });
+
+  audioEnableBtn.addEventListener("click",async()=>{userInteracted=true;if(pendingAudio)await playBase64WavOrFallback(pendingAudio.b64,pendingAudio.text);pendingAudio=null;audioEnableBtn.style.display="none";});
+
+  // ✅ Form submission
+  form.addEventListener("submit", async (e)=>{
+    e.preventDefault();
+    const data={
+      full_name: fullNameInput.value,
+      email: emailInput.value,
+      phone: phoneInput.value,
+      dob: dobInput.value
+    };
+    const res=await fetch(API+"/submit",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(data)
+    });
+    const out=await res.json();
+    alert("Form submitted! Check backend logs.");
+    console.log("Submitted:",out);
+  });
+
+  start();
+  </script>
 </body>
 </html>

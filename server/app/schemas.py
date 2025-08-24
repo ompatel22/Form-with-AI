@@ -7,19 +7,24 @@ class STTResponse(BaseModel):
 class StartFormRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
     schema: Dict[str, Any]  # dynamic schema: {"fields":[{...}]}
+    generate_audio: bool = False
 
 class StartFormResponse(BaseModel):
     session_id: str
-    next_question: Optional[str]
+    agent_reply: Optional[str]
+    audio_b64: Optional[str] = None
+    form_state: Dict[str, Any]
     is_complete: bool
 
 class TurnRequest(BaseModel):
     session_id: str = Field(..., min_length=1)
-    user_text: str = Field(..., min_length=1)
+    user_text: Optional[str] = None
+    audio_b64: Optional[str] = None
+    generate_audio: bool = False
 
 class TurnResponse(BaseModel):
     agent_reply: str
-    audio_url: Optional[str] = None
+    audio_b64: Optional[str] = None
     form_state: Dict[str, Any]
     is_complete: bool
 

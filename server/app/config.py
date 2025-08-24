@@ -8,9 +8,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "info"
     ALLOWED_ORIGINS: List[str] = ["*"]
 
-    # OpenAI
-    OPENAI_API_KEY: str
-    OPENAI_MODEL: str = "gpt-3.5-turbo"
+    # Gemini
+    GEMINI_API_KEY: str
+    GEMINI_MODEL: str = "gemini-2.0-flash-lite"
 
     # Whisper
     WHISPER_MODEL_SIZE: str = "base"

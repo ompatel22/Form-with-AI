@@ -1,0 +1,40 @@
+# ------------------------
+# Node / Frontend (Vite, React)
+# ------------------------
+Form-with-AI-Frontend/node_modules/
+Form-with-AI-Frontend/dist/
+Form-with-AI-Frontend/.vite/
+Form-with-AI-Frontend/.env.local
+Form-with-AI-Frontend/.DS_Store
+
+# ------------------------
+# Python / Backend
+# ------------------------
+server/.venv/
+server/__pycache__/
+server/app/__pycache__/
+server/media
+*.pyc
+*.pyo
+*.pyd
+
+# Environment files
+.env
+
+# ------------------------
+# OS / Editor files
+# ------------------------
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# ------------------------
+# Optional (if you use tests or build artifacts)
+# ------------------------
+.coverage
+pytest_cache/
+*.egg-info/
+build/
+dist/
