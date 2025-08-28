@@ -13,7 +13,7 @@ class DynamicDialog:
       ]
     }
     """
-    def __init__(self, schema: Dict[str, Any]):
+    def _init_(self, schema: Dict[str, Any]):
         self.fields = list(schema.get("fields", []))
         self.field_order = [f["name"] for f in self.fields]
         self.index = 0

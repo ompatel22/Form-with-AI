@@ -5,12 +5,13 @@ import tempfile
 import os
 import asyncio
 import traceback
+import zipfile
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 import pyttsx3
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from pydantic import BaseModel, validator, Field
 import logging
 from datetime import datetime
@@ -19,6 +20,8 @@ from pathlib import Path
 import uuid
 from .llm import GeminiLLM
 from .memory import memory_store, FieldStatus, MessageRole
+from .form_builder import FormSchema, FormField, FieldType, FormResponse, form_store, SAMPLE_FORMS
+from .dynamic_chat import DynamicFormConversation
 
 # Configure logging
 logging.basicConfig(
@@ -219,6 +222,36 @@ class SessionInfoResponse(BaseModel):
     field_summary: Dict[str, Any]
     message_count: int
     context: Dict[str, Any]
+
+# Form Builder Models
+class CreateFormRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = None
+    fields: List[Dict[str, Any]]
+    confirmation_message: str = "Thank you for your response!"
+
+class UpdateFormRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    fields: Optional[List[Dict[str, Any]]] = None
+    confirmation_message: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class DynamicChatRequest(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=100)
+    form_id: str = Field(..., min_length=1)
+    message: str = Field("", max_length=1000)
+
+class DynamicChatResponse(BaseModel):
+    action: str
+    reply: str
+    ask: Optional[str] = None
+    updates: Optional[Dict[str, Any]] = None
+    audio_b64: Optional[str] = None
+    form_summary: Optional[Dict[str, Any]] = None
+    completion_status: Optional[Dict[str, Any]] = None
+    field_focus: Optional[str] = None
+    tone: Optional[str] = None
 
 # # Normalize user speech input
 # def normalize_user_text(text: str) -> str:
@@ -746,6 +779,525 @@ def export_session(session_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Session export failed"
+        )
+
+# ========================================
+# FORM BUILDER ENDPOINTS
+# ========================================
+
+@app.get("/forms")
+def list_forms():
+    """List all available forms"""
+    try:
+        forms = form_store.list_forms()
+        return {
+            "status": "success",
+            "forms": [
+                {
+                    "id": form.id,
+                    "title": form.title,
+                    "description": form.description,
+                    "field_count": len(form.fields),
+                    "is_active": form.is_active,
+                    "created_at": form.created_at,
+                    "updated_at": form.updated_at
+                }
+                for form in forms
+            ],
+            "count": len(forms)
+        }
+    except Exception as e:
+        logger.error(f"Error listing forms: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list forms"
+        )
+
+@app.post("/forms")
+def create_form(req: CreateFormRequest):
+    """Create a new dynamic form"""
+    try:
+        # Validate field types
+        valid_types = [t.value for t in FieldType]
+        for field_data in req.fields:
+            if field_data.get("type") not in valid_types:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid field type: {field_data.get('type')}. Valid types: {valid_types}"
+                )
+        
+        form_data = req.dict()
+        form = form_store.create_form(form_data)
+        
+        logger.info(f"Created new form: {form.id} - {form.title}")
+        
+        return {
+            "status": "success",
+            "message": "Form created successfully",
+            "form": {
+                "id": form.id,
+                "title": form.title,
+                "description": form.description,
+                "fields": [
+                    {
+                        "id": field.id,
+                        "name": field.name,
+                        "type": field.type.value,
+                        "label": field.label,
+                        "required": field.validation.required,
+                        "order": field.order
+                    }
+                    for field in form.fields
+                ]
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating form: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create form"
+        )
+
+@app.get("/forms/{form_id}")
+def get_form(form_id: str):
+    """Get form by ID"""
+    try:
+        form = form_store.get_form(form_id)
+        if not form:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Form not found"
+            )
+        
+        return {
+            "status": "success",
+            "form": form.dict()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting form {form_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve form"
+        )
+
+@app.put("/forms/{form_id}")
+def update_form(form_id: str, req: UpdateFormRequest):
+    """Update existing form"""
+    try:
+        form = form_store.get_form(form_id)
+        if not form:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Form not found"
+            )
+        
+        # Prepare update data
+        update_data = form.dict()
+        
+        if req.title is not None:
+            update_data["title"] = req.title
+        if req.description is not None:
+            update_data["description"] = req.description
+        if req.fields is not None:
+            update_data["fields"] = req.fields
+        if req.confirmation_message is not None:
+            update_data["confirmation_message"] = req.confirmation_message
+        if req.is_active is not None:
+            update_data["is_active"] = req.is_active
+        
+        updated_form = form_store.update_form(form_id, update_data)
+        
+        logger.info(f"Updated form: {form_id}")
+        
+        return {
+            "status": "success",
+            "message": "Form updated successfully",
+            "form": updated_form.dict()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating form {form_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update form"
+        )
+
+@app.delete("/forms/{form_id}")
+def delete_form(form_id: str):
+    """Delete form and all responses"""
+    try:
+        success = form_store.delete_form(form_id)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Form not found"
+            )
+        
+        logger.info(f"Deleted form: {form_id}")
+        
+        return {
+            "status": "success",
+            "message": "Form deleted successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting form {form_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete form"
+        )
+
+# Dynamic Chat for Forms
+@app.post("/dynamic-chat", response_model=DynamicChatResponse)
+async def dynamic_chat(req: DynamicChatRequest):
+    """Enhanced chat endpoint for dynamic forms"""
+    try:
+        # Get or create session
+        session = memory_store.get_or_create_session(req.session_id)
+        
+        # Add user message to session
+        session.add_message(MessageRole.USER, req.message)
+        
+        # Create dynamic form conversation handler
+        form_conversation = DynamicFormConversation(req.form_id, session)
+        
+        # Process user input
+        llm_response = form_conversation.process_user_input(req.message)
+        
+        # Generate audio response
+        audio_b64 = ""
+        reply_text = llm_response.get("ask", llm_response.get("reply", ""))
+        if reply_text:
+            try:
+                audio_b64 = tts_to_base64_wav(reply_text)
+            except Exception as e:
+                logger.warning(f"TTS generation failed: {e}")
+        
+        # Add agent response to session
+        session.add_message(MessageRole.AGENT, reply_text)
+        
+        # Get form summary
+        form_summary = form_conversation.get_form_summary()
+        
+        response = DynamicChatResponse(
+            action=llm_response.get("action", "ask"),
+            reply=reply_text,
+            ask=llm_response.get("ask"),
+            updates=llm_response.get("updates", {}),
+            audio_b64=audio_b64,
+            form_summary=form_summary,
+            completion_status=llm_response.get("completion_status"),
+            field_focus=llm_response.get("field_focus"),
+            tone=llm_response.get("tone", "friendly")
+        )
+        
+        logger.info(f"Dynamic chat processed for session {req.session_id}, form {req.form_id}")
+        return response
+        
+    except Exception as e:
+        logger.error(f"Dynamic chat processing failed: {e}\n{traceback.format_exc()}")
+        
+        return DynamicChatResponse(
+            action="error",
+            reply="I'm having a technical issue. Could you please try again?",
+            audio_b64="",
+            form_summary=None
+        )
+
+# Form Response Endpoints
+@app.post("/forms/{form_id}/submit")
+async def submit_form_response(form_id: str, response_data: Dict[str, Any]):
+    """Submit a response to a form"""
+    try:
+        form = form_store.get_form(form_id)
+        if not form:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Form not found"
+            )
+        
+        # Create response
+        submission = {
+            "form_id": form_id,
+            "session_id": response_data.get("session_id", str(uuid.uuid4())),
+            "responses": response_data.get("responses", {}),
+            "user_email": response_data.get("user_email")
+        }
+        
+        response = form_store.submit_response(submission)
+        
+        logger.info(f"Form response submitted: {response.id} for form {form_id}")
+        
+        return {
+            "status": "success",
+            "message": form.confirmation_message,
+            "response_id": response.id,
+            "submitted_at": response.submitted_at
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error submitting form response: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit form response"
+        )
+
+@app.get("/forms/{form_id}/responses")
+def get_form_responses(form_id: str):
+    """Get all responses for a form"""
+    try:
+        form = form_store.get_form(form_id)
+        if not form:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Form not found"
+            )
+        
+        responses = form_store.get_responses(form_id)
+        
+        return {
+            "status": "success",
+            "form_title": form.title,
+            "response_count": len(responses),
+            "responses": [
+                {
+                    "id": resp.id,
+                    "session_id": resp.session_id,
+                    "responses": resp.responses,
+                    "submitted_at": resp.submitted_at,
+                    "user_email": resp.user_email
+                }
+                for resp in responses
+            ]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting form responses: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve form responses"
+        )
+
+# Sample Forms and Templates
+@app.get("/forms/templates/list")
+def list_form_templates():
+    """List available form templates"""
+    try:
+        return {
+            "status": "success",
+            "templates": [
+                {
+                    "id": template_id,
+                    "title": template_data["title"],
+                    "description": template_data["description"],
+                    "field_count": len(template_data["fields"])
+                }
+                for template_id, template_data in SAMPLE_FORMS.items()
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error listing templates: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to list templates"
+        )
+
+@app.post("/forms/templates/{template_id}")
+def create_form_from_template(template_id: str, title_override: Optional[str] = None):
+    """Create a new form from a template"""
+    try:
+        if template_id not in SAMPLE_FORMS:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Template not found"
+            )
+        
+        template_data = SAMPLE_FORMS[template_id].copy()
+        
+        if title_override:
+            template_data["title"] = title_override
+        
+        form = form_store.create_form(template_data)
+        
+        logger.info(f"Created form from template {template_id}: {form.id}")
+        
+        return {
+            "status": "success",
+            "message": "Form created from template successfully",
+            "form": form.dict()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating form from template: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create form from template"
+        )
+
+# ========================================
+# CODE EXPORT FUNCTIONALITY  
+# ========================================
+
+@app.get("/export/project")
+async def export_project():
+    """Export entire project as ZIP file"""
+    try:
+        # Create temporary zip file
+        temp_dir = tempfile.mkdtemp()
+        zip_path = os.path.join(temp_dir, "form-with-ai-project.zip")
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Add all project files
+            project_root = Path("/app")
+            
+            for root, dirs, files in os.walk(project_root):
+                # Skip certain directories
+                dirs[:] = [d for d in dirs if d not in ['.git', '__pycache__', '.emergent', 'node_modules', '.venv']]
+                
+                for file in files:
+                    # Skip certain file types
+                    if file.endswith(('.pyc', '.log', '.tmp')):
+                        continue
+                    
+                    file_path = Path(root) / file
+                    arc_path = file_path.relative_to(project_root)
+                    
+                    try:
+                        zipf.write(file_path, arc_path)
+                    except Exception as e:
+                        logger.warning(f"Skipped file {file_path}: {e}")
+        
+        # Read zip file
+        with open(zip_path, 'rb') as f:
+            zip_data = f.read()
+        
+        # Cleanup
+        os.remove(zip_path)
+        os.rmdir(temp_dir)
+        
+        # Return as streaming response
+        def generate():
+            yield zip_data
+        
+        return StreamingResponse(
+            generate(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": "attachment; filename=form-with-ai-project.zip",
+                "Content-Length": str(len(zip_data))
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Project export failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to export project"
+        )
+
+@app.get("/export/setup-guide")
+def get_setup_guide():
+    """Get setup instructions for local development"""
+    try:
+        guide = {
+            "title": "Local Development Setup Guide",
+            "steps": [
+                {
+                    "step": 1,
+                    "title": "Download Project",
+                    "description": "Download the project ZIP from /export/project endpoint"
+                },
+                {
+                    "step": 2,
+                    "title": "Extract Files",
+                    "description": "Extract the ZIP file to your desired directory"
+                },
+                {
+                    "step": 3,
+                    "title": "Backend Setup",
+                    "commands": [
+                        "cd server",
+                        "python -m venv venv",
+                        "source venv/bin/activate  # On Windows: venv\\Scripts\\activate",
+                        "pip install -r requirements.txt"
+                    ]
+                },
+                {
+                    "step": 4,
+                    "title": "Frontend Setup", 
+                    "commands": [
+                        "cd Form-with-AI-Frontend",
+                        "npm install"
+                    ]
+                },
+                {
+                    "step": 5,
+                    "title": "Environment Variables",
+                    "description": "Update .env files with your API keys",
+                    "files": [
+                        "server/.env - Add your GEMINI_API_KEY",
+                        "Form-with-AI-Frontend/.env - Update REACT_APP_BACKEND_URL if needed"
+                    ]
+                },
+                {
+                    "step": 6,
+                    "title": "Run Backend",
+                    "commands": [
+                        "cd server",
+                        "python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+                    ]
+                },
+                {
+                    "step": 7,
+                    "title": "Run Frontend",
+                    "commands": [
+                        "cd Form-with-AI-Frontend",
+                        "npm run dev"
+                    ]
+                },
+                {
+                    "step": 8,
+                    "title": "Access Application",
+                    "description": "Open browser and go to:",
+                    "urls": [
+                        "Frontend: http://localhost:5173",
+                        "Backend API: http://localhost:8000",
+                        "API Docs: http://localhost:8000/docs"
+                    ]
+                }
+            ],
+            "requirements": {
+                "python": "3.8+",
+                "node": "16+",
+                "npm": "8+"
+            },
+            "api_keys_needed": [
+                "GEMINI_API_KEY - Get from Google AI Studio"
+            ]
+        }
+        
+        return {
+            "status": "success",
+            "setup_guide": guide
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating setup guide: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate setup guide"
         )
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import FormSide from "./components/FormSide.jsx";
 import ChatSide from "./components/ChatSide.jsx";
+import FormManager from "./components/FormManager.jsx";
+import DynamicFormRenderer from "./components/DynamicFormRenderer.jsx";
 
 const API = "http://127.0.0.1:8000";
 const sessionId = "session1";
@@ -10,12 +12,21 @@ function App() {
   const [inputText, setInputText] = useState("");
   const [status, setStatus] = useState("idle");
   const [pendingAudio, setPendingAudio] = useState(null);
-  const [formData, setFormData] = useState({
+  
+  // Dynamic form state
+  const [currentForm, setCurrentForm] = useState(null);
+  const [formData, setFormData] = useState({});
+  const [showFormManager, setShowFormManager] = useState(false);
+  const [isLegacyMode, setIsLegacyMode] = useState(true); // Start with legacy form
+  
+  // Legacy form data
+  const [legacyFormData, setLegacyFormData] = useState({
     fullName: "",
     email: "",
     phone: "",
     dob: "",
   });
+  
   const [sessionStatus, setSessionStatus] = useState({
     completed: false,
     current_field: null,
@@ -54,7 +65,6 @@ function App() {
       await audio.play();
       setPendingAudio(null);
 
-      // Clean up the URL to prevent memory leaks
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
       console.warn("Audio playback failed, using speech synthesis:", err);
@@ -63,8 +73,8 @@ function App() {
     }
   };
 
-  // Enhanced form data update function with better field extraction
-  const updateFormData = (updates) => {
+  // Enhanced form data update function for legacy forms
+  const updateLegacyFormData = (updates) => {
     console.log("Raw updates from backend:", updates);
 
     if (!updates || typeof updates !== "object") {
@@ -72,10 +82,9 @@ function App() {
       return;
     }
 
-    setFormData((prev) => {
+    setLegacyFormData((prev) => {
       const newFormData = { ...prev };
 
-      // Handle different field name formats from backend
       const fieldMappings = {
         full_name: "fullName",
         fullName: "fullName",
@@ -84,7 +93,6 @@ function App() {
         dob: "dob",
       };
 
-      // Process each field in updates
       Object.entries(updates).forEach(([key, fieldData]) => {
         console.log(`Processing field: ${key}`, fieldData);
 
@@ -93,22 +101,17 @@ function App() {
         if (frontendFieldName) {
           let value = "";
 
-          // Handle different data structures from backend
           if (typeof fieldData === "string") {
             value = fieldData;
           } else if (fieldData && typeof fieldData === "object") {
-            // Try multiple possible value locations
             value =
               fieldData.value ||
               fieldData.collected ||
               fieldData.data ||
               (fieldData.status === "collected" ? fieldData.value : "") ||
               "";
-
-            console.log(`Extracted value for ${key}:`, value);
           }
 
-          // Validate and update field
           if (
             value &&
             typeof value === "string" &&
@@ -118,23 +121,9 @@ function App() {
             const cleanValue = value.trim();
             console.log(`✅ Updating ${frontendFieldName}: "${cleanValue}"`);
             newFormData[frontendFieldName] = cleanValue;
-          } else {
-            console.log(`⚠️ Skipping invalid value for ${key}:`, value);
           }
-        } else {
-          console.log(`⚠️ Unknown field mapping for: ${key}`);
         }
       });
-
-      // SPECIAL DOB HANDLING - Check for date patterns in recent messages
-      if (!newFormData.dob || newFormData.dob.trim() === "") {
-        // Look for DOB patterns in the updates or recent conversation
-        const possibleDob = updates.dob || updates.date_of_birth || "";
-        if (possibleDob && possibleDob.includes("/")) {
-          console.log(`✅ Setting DOB: ${possibleDob}`);
-          newFormData.dob = possibleDob;
-        }
-      }
 
       // FORMAT PHONE NUMBER
       if (newFormData.phone && !newFormData.phone.includes("(")) {
@@ -147,12 +136,21 @@ function App() {
         }
       }
 
-      console.log("Final updated form data:", newFormData);
+      console.log("Final updated legacy form data:", newFormData);
       return newFormData;
     });
   };
 
-  const backendChat = async (msg) => {
+  // Dynamic form data update function
+  const updateDynamicFormData = (fieldName, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [fieldName]: value
+    }));
+  };
+
+  // Legacy backend chat
+  const legacyBackendChat = async (msg) => {
     setStatus("waiting...");
     try {
       const res = await fetch(`${API}/chat`, {
@@ -170,7 +168,6 @@ function App() {
 
       setStatus("idle");
 
-      // Add agent message
       if (data.reply) {
         setMessages((prev) => [
           ...prev,
@@ -184,17 +181,14 @@ function App() {
         ]);
       }
 
-      // Update session status
       if (data.session_status) {
         setSessionStatus(data.session_status);
       }
 
-      // Update form data with enhanced handling
       if (data.updates) {
-        updateFormData(data.updates);
+        updateLegacyFormData(data.updates);
       }
 
-      // Play audio response
       if (data.audio_b64 || data.reply) {
         await playBase64WavOrFallback(data.audio_b64, data.reply);
       }
@@ -213,11 +207,77 @@ function App() {
     }
   };
 
+  // Dynamic backend chat
+  const dynamicBackendChat = async (msg) => {
+    if (!currentForm) return;
+
+    setStatus("waiting...");
+    try {
+      const res = await fetch(`${API}/dynamic-chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          session_id: sessionId, 
+          form_id: currentForm.id,
+          message: msg 
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      const data = await res.json();
+      console.log("Dynamic backend response:", data);
+
+      setStatus("idle");
+
+      if (data.reply) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            text: data.reply,
+            who: "agent",
+            timestamp: new Date().toISOString(),
+            action: data.action,
+            tone: data.tone,
+          },
+        ]);
+      }
+
+      // Update form data based on form summary
+      if (data.form_summary && data.form_summary.fields) {
+        const newFormData = {};
+        Object.entries(data.form_summary.fields).forEach(([fieldName, fieldInfo]) => {
+          if (fieldInfo.value && fieldInfo.status === 'collected') {
+            newFormData[fieldName] = fieldInfo.value;
+          }
+        });
+        setFormData(prev => ({ ...prev, ...newFormData }));
+      }
+
+      if (data.audio_b64 || data.reply) {
+        await playBase64WavOrFallback(data.audio_b64, data.reply);
+      }
+    } catch (err) {
+      console.error("Dynamic chat error:", err);
+      setStatus("error");
+      setMessages((prev) => [
+        ...prev,
+        {
+          text: `Connection error: ${err.message}. Please check if the backend is running.`,
+          who: "agent",
+          timestamp: new Date().toISOString(),
+          isError: true,
+        },
+      ]);
+    }
+  };
+
   const handleSend = async () => {
     const message = inputText.trim();
     if (!message) return;
 
-    // Add user message immediately
     setMessages((prev) => [
       ...prev,
       {
@@ -228,8 +288,12 @@ function App() {
     ]);
     setInputText("");
 
-    // Send to backend
-    await backendChat(message);
+    // Use appropriate chat function
+    if (isLegacyMode) {
+      await legacyBackendChat(message);
+    } else {
+      await dynamicBackendChat(message);
+    }
   };
 
   const handleMic = () => {
@@ -261,7 +325,12 @@ function App() {
           isVoice: true,
         },
       ]);
-      backendChat(text);
+      
+      if (isLegacyMode) {
+        legacyBackendChat(text);
+      } else {
+        dynamicBackendChat(text);
+      }
     };
 
     rec.onerror = (e) => {
@@ -301,13 +370,13 @@ function App() {
     }
   };
 
-  const handleSubmit = async (e) => {
+  // Legacy form submission
+  const handleLegacySubmit = async (e) => {
     e.preventDefault();
 
-    // Validate required fields
     const requiredFields = ["fullName", "email", "phone", "dob"];
     const emptyFields = requiredFields.filter(
-      (field) => !formData[field] || !formData[field].trim()
+      (field) => !legacyFormData[field] || !legacyFormData[field].trim()
     );
 
     if (emptyFields.length > 0) {
@@ -330,13 +399,11 @@ function App() {
 
       const submissionData = {
         session_id: sessionId,
-        full_name: formData.fullName,
-        email: formData.email,
-        phone: formData.phone,
-        dob: formData.dob,
+        full_name: legacyFormData.fullName,
+        email: legacyFormData.email,
+        phone: legacyFormData.phone,
+        dob: legacyFormData.dob,
       };
-
-      console.log("Submitting form data:", submissionData);
 
       const res = await fetch(`${API}/submit`, {
         method: "POST",
@@ -351,7 +418,6 @@ function App() {
       const result = await res.json();
       console.log("Submission result:", result);
 
-      // Success feedback
       alert("Form submitted successfully! ✅");
       setMessages((prev) => [
         ...prev,
@@ -367,29 +433,90 @@ function App() {
     } catch (err) {
       console.error("Submission error:", err);
       alert(`Error submitting form: ${err.message}`);
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: `Submission failed: ${err.message}`,
-          who: "agent",
-          timestamp: new Date().toISOString(),
-          isError: true,
-        },
-      ]);
     } finally {
       setStatus("idle");
     }
   };
 
-  // Enhanced form field update handler
-  const handleFormFieldChange = (fieldName, value) => {
-    setFormData((prev) => ({
-      ...prev,
-      [fieldName]: value,
-    }));
+  // Dynamic form submission
+  const handleDynamicSubmit = async (e) => {
+    e.preventDefault();
+
+    try {
+      setStatus("submitting");
+
+      const submissionData = {
+        session_id: sessionId,
+        responses: formData
+      };
+
+      const res = await fetch(`${API}/forms/${currentForm.id}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(submissionData),
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      const result = await res.json();
+      console.log("Dynamic submission result:", result);
+
+      alert("Form submitted successfully! ✅");
+      setMessages((prev) => [
+        ...prev,
+        {
+          text: result.message || "Form has been successfully submitted!",
+          who: "agent",
+          timestamp: new Date().toISOString(),
+          isSuccess: true,
+        },
+      ]);
+
+    } catch (err) {
+      console.error("Submission error:", err);
+      alert(`Error submitting form: ${err.message}`);
+    } finally {
+      setStatus("idle");
+    }
   };
 
-  // Reset conversation
+  const handleFormSelected = (form) => {
+    console.log("Form selected:", form);
+    setCurrentForm(form);
+    setFormData({});
+    setMessages([]);
+    setIsLegacyMode(false);
+    setShowFormManager(false);
+    
+    // Start conversation for the new form
+    dynamicBackendChat("");
+  };
+
+  const switchToLegacyMode = () => {
+    setIsLegacyMode(true);
+    setCurrentForm(null);
+    setFormData({});
+    setMessages([]);
+    
+    // Reset legacy form
+    setLegacyFormData({
+      fullName: "",
+      email: "",
+      phone: "",
+      dob: "",
+    });
+    setSessionStatus({
+      completed: false,
+      current_field: null,
+      frustration_level: 0,
+    });
+
+    // Start legacy conversation
+    legacyBackendChat("");
+  };
+
   const handleReset = async () => {
     if (!confirm("Are you sure you want to reset the conversation and form?")) {
       return;
@@ -398,24 +525,27 @@ function App() {
     try {
       await fetch(`${API}/reset?session_id=${sessionId}`, { method: "POST" });
 
-      // Reset all state
       setMessages([]);
-      setFormData({
-        fullName: "",
-        email: "",
-        phone: "",
-        dob: "",
-      });
-      setSessionStatus({
-        completed: false,
-        current_field: null,
-        frustration_level: 0,
-      });
       setStatus("idle");
       setPendingAudio(null);
 
-      // Start new conversation
-      await backendChat("");
+      if (isLegacyMode) {
+        setLegacyFormData({
+          fullName: "",
+          email: "",
+          phone: "",
+          dob: "",
+        });
+        setSessionStatus({
+          completed: false,
+          current_field: null,
+          frustration_level: 0,
+        });
+        await legacyBackendChat("");
+      } else {
+        setFormData({});
+        await dynamicBackendChat("");
+      }
     } catch (err) {
       console.error("Reset error:", err);
       alert("Failed to reset conversation");
@@ -431,7 +561,10 @@ function App() {
       try {
         setStatus("initializing");
         await fetch(`${API}/reset?session_id=${sessionId}`, { method: "POST" });
-        await backendChat(""); // Start conversation
+        
+        if (isLegacyMode) {
+          await legacyBackendChat("");
+        }
       } catch (err) {
         console.error("Initialization error:", err);
         setStatus("error");
@@ -447,7 +580,16 @@ function App() {
     };
 
     startConversation();
-  }, []);
+  }, [isLegacyMode]);
+
+  if (showFormManager) {
+    return (
+      <FormManager
+        onFormSelected={handleFormSelected}
+        onClose={() => setShowFormManager(false)}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4 md:p-8 font-inter antialiased">
@@ -455,8 +597,38 @@ function App() {
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl md:text-4xl font-bold text-gray-800 mb-4 tracking-tight">
-            Student Registration — Conversational Agent
+            {isLegacyMode 
+              ? "Student Registration — Conversational Agent" 
+              : currentForm 
+                ? `${currentForm.title} — Conversational Agent`
+                : "Form Filling — Conversational Agent"
+            }
           </h1>
+          
+          {/* Mode Switcher */}
+          <div className="flex items-center justify-center gap-4 mb-4">
+            <button
+              onClick={switchToLegacyMode}
+              className={`px-4 py-2 rounded-lg transition-colors ${
+                isLegacyMode
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+              }`}
+            >
+              Legacy Form
+            </button>
+            <button
+              onClick={() => setShowFormManager(true)}
+              className={`px-4 py-2 rounded-lg transition-colors ${
+                !isLegacyMode
+                  ? "bg-purple-600 text-white"
+                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+              }`}
+            >
+              Dynamic Forms
+            </button>
+          </div>
+          
           <div className="flex items-center justify-center gap-4 text-sm text-gray-600">
             <span
               className={`px-3 py-1 rounded-full ${
@@ -473,12 +645,12 @@ function App() {
             >
               Status: {status}
             </span>
-            {sessionStatus.current_field && (
+            {sessionStatus.current_field && isLegacyMode && (
               <span className="px-3 py-1 bg-blue-50 text-blue-700 rounded-full">
                 Focus: {sessionStatus.current_field.replace("_", " ")}
               </span>
             )}
-            {sessionStatus.completed && (
+            {sessionStatus.completed && isLegacyMode && (
               <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full">
                 ✓ Complete
               </span>
@@ -488,13 +660,43 @@ function App() {
 
         {/* Main Content */}
         <div className="flex flex-col lg:flex-row gap-6 shadow-2xl rounded-2xl overflow-hidden bg-white">
-          <FormSide
-            formData={formData}
-            setFormData={handleFormFieldChange}
-            handleSubmit={handleSubmit}
-            sessionStatus={sessionStatus}
-            status={status}
-          />
+          {isLegacyMode ? (
+            <FormSide
+              formData={legacyFormData}
+              setFormData={(field, value) => 
+                setLegacyFormData(prev => ({ ...prev, [field]: value }))
+              }
+              handleSubmit={handleLegacySubmit}
+              sessionStatus={sessionStatus}
+              status={status}
+            />
+          ) : currentForm ? (
+            <DynamicFormRenderer
+              formSchema={currentForm}
+              formData={formData}
+              onChange={updateDynamicFormData}
+              onSubmit={handleDynamicSubmit}
+            />
+          ) : (
+            <div className="flex-1 bg-gradient-to-b from-blue-50 to-white p-10 rounded-l-2xl flex items-center justify-center">
+              <div className="text-center">
+                <div className="text-6xl mb-4">🚀</div>
+                <h3 className="text-xl font-semibold text-gray-800 mb-2">
+                  Ready to Get Started
+                </h3>
+                <p className="text-gray-600 mb-6">
+                  Select a form to begin your conversational form filling experience
+                </p>
+                <button
+                  onClick={() => setShowFormManager(true)}
+                  className="bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors shadow-md"
+                >
+                  Choose Form
+                </button>
+              </div>
+            </div>
+          )}
+          
           <ChatSide
             messages={messages}
             inputText={inputText}
@@ -507,6 +709,17 @@ function App() {
             onReset={handleReset}
             sessionStatus={sessionStatus}
           />
+        </div>
+
+        {/* Export Button */}
+        <div className="mt-6 text-center">
+          <a
+            href={`${API}/export/project`}
+            download="form-with-ai-project.zip"
+            className="inline-flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md hover:shadow-lg"
+          >
+            📦 Download Project ZIP
+          </a>
         </div>
       </div>
     </div>

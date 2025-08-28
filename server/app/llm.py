@@ -115,17 +115,16 @@ class AdvancedValidator:
         
         cleaned = re.sub(r'\s+', ' ', value.strip()).title()
         
-        # Basic pattern check
-        if not re.match(r"^[A-Za-z\s\-\'\.]{2,50}$", cleaned):
+        # More permissive pattern check - allow more unicode characters and common name patterns
+        if not re.match(r"^[A-Za-z\u00C0-\u017F\s\-\'\.]{1,100}$", cleaned):
             return ValidationResult(False, "", "Name contains invalid characters", "Please use only letters, spaces, hyphens, and apostrophes")
         
-        # Must have at least 2 parts or be a single name with 2+ chars
-        parts = cleaned.split()
-        if len(parts) == 1 and len(cleaned) < 2:
-            return ValidationResult(False, "", "Name too short", "Please enter at least 2 characters")
+        # Must have at least 1 character (removed 2+ parts requirement to allow single names)
+        if len(cleaned.strip()) < 1:
+            return ValidationResult(False, "", "Name too short", "Please enter at least 1 character")
         
-        # Check for obviously fake names
-        fake_patterns = [r'test', r'asdf', r'qwerty', r'1234', r'abcd']
+        # More lenient fake name check - only block obvious test patterns
+        fake_patterns = [r'^test$', r'^asdf$', r'^qwerty$', r'^\d+$', r'^abc+$']
         if any(re.search(pattern, cleaned.lower()) for pattern in fake_patterns):
             return ValidationResult(False, "", "Please enter a real name", "This looks like a test input")
         
