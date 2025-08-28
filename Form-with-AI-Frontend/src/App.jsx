@@ -710,17 +710,6 @@ function App() {
             sessionStatus={sessionStatus}
           />
         </div>
-
-        {/* Export Button */}
-        <div className="mt-6 text-center">
-          <a
-            href={`${API}/export/project`}
-            download="form-with-ai-project.zip"
-            className="inline-flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md hover:shadow-lg"
-          >
-            📦 Download Project ZIP
-          </a>
-        </div>
       </div>
     </div>
   );
