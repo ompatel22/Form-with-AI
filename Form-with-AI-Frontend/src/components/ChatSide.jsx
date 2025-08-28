@@ -26,9 +26,11 @@ export default function ChatSide({
 
   return (
     <div className="flex-1 flex flex-col bg-gradient-to-b from-white to-gray-50 p-10 rounded-r-2xl">
+      {/* CHAT CONTAINER WITH FIXED HEIGHT AND SCROLLING */}
       <div
         ref={chatRef}
-        className="flex-1 overflow-y-auto space-y-4 pr-2"
+        className="flex-1 overflow-y-auto space-y-4 pr-2 max-h-96 min-h-80 border border-gray-200 rounded-lg p-4 bg-white/50"
+        style={{ scrollBehavior: 'smooth' }}
       >
         {messages.map((msg, index) => (
           <div

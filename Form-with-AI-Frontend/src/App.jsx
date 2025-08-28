@@ -65,11 +65,35 @@ function App() {
       await audio.play();
       setPendingAudio(null);
 
+      // AUTO-LISTENING: Automatically start listening after TTS completes
+      audio.addEventListener('ended', () => {
+        setTimeout(() => {
+          // Auto-start microphone after a brief pause
+          console.log("🎙️ Auto-starting microphone after TTS completion");
+          handleMic();
+        }, 500); // 500ms delay to feel natural
+      });
+
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
       console.warn("Audio playback failed, using speech synthesis:", err);
       setPendingAudio({ b64, text });
-      if (text) speakText(text);
+      if (text) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "en-US";
+        utterance.rate = 0.9;
+        utterance.pitch = 1.0;
+        
+        // AUTO-LISTENING: Also handle for speech synthesis
+        utterance.onend = () => {
+          setTimeout(() => {
+            console.log("🎙️ Auto-starting microphone after speech synthesis");
+            handleMic();
+          }, 500);
+        };
+        
+        window.speechSynthesis.speak(utterance);
+      }
     }
   };
 

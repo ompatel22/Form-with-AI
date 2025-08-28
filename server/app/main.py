@@ -294,18 +294,28 @@ def enhanced_normalize_speech(text: str) -> str:
     
     s = text.strip()
     
-    # More aggressive email corrections
-    s = re.sub(r'\bat\s+the\s+rate\b', '@', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bat\s+rate\b', '@', s, flags=re.IGNORECASE) 
-    s = re.sub(r'\bat\b', '@', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bdot\s+com\b', '.com', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bdot\s+gmail\s+com\b', '.gmail.com', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bgmail\s+dot\s+com\b', 'gmail.com', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bdot\b', '.', s, flags=re.IGNORECASE)
+    # SUPER AGGRESSIVE email corrections for "at the rate" issue
+    s = re.sub(r'\bat\s*the\s*rate\b', '@', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bat\s*rate\b', '@', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bthe\s*rate\b', '@', s, flags=re.IGNORECASE)  # Sometimes "at" gets dropped
+    s = re.sub(r'\brate\s*([a-zA-Z])', r'@\1', s, flags=re.IGNORECASE)  # "rate gmail" -> "@gmail"
     
-    # Fix common email patterns like "Om 358227 at Gmail.com" -> "Om358227@Gmail.com"
-    s = re.sub(r'(\w+)\s+(\d+)\s+at\s+([a-zA-Z]+\.com)', r'\1\2@\3', s, flags=re.IGNORECASE)
+    # Handle cases where @ gets converted to "at" 
+    s = re.sub(r'(\w+)\s*at\s*([a-zA-Z]+\.com)', r'\1@\2', s, flags=re.IGNORECASE)
+    s = re.sub(r'(\w+)\s*(\d+)\s*at\s*([a-zA-Z]+\.com)', r'\1\2@\3', s, flags=re.IGNORECASE)
+    s = re.sub(r'(\w+)\s*(\d+)\s*at\s*the\s*rate\s*([a-zA-Z]+\.com)', r'\1\2@\3', s, flags=re.IGNORECASE)
+    
+    # Enhanced dot handling
+    s = re.sub(r'\bdot\s*com\b', '.com', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bdot\s*gmail\s*com\b', '.gmail.com', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bgmail\s*dot\s*com\b', 'gmail.com', s, flags=re.IGNORECASE)
+    
+    # Fix specific patterns from the user's example: "Om Patel 2212 at the rate gmail.com"
+    s = re.sub(r'(\w+\s+\w+)\s+(\d+)\s+at\s+the\s+rate\s+([a-zA-Z]+\.com)', r'\1\2@\3', s, flags=re.IGNORECASE)
     s = re.sub(r'(\w+)\s+(\d+)\s+at\s+the\s+rate\s+([a-zA-Z]+\.com)', r'\1\2@\3', s, flags=re.IGNORECASE)
+    
+    # Handle dots more broadly
+    s = re.sub(r'\bdot\b', '.', s, flags=re.IGNORECASE)
     
     # Clean up whitespace
     s = re.sub(r'\s+', ' ', s).strip()
@@ -488,33 +498,74 @@ async def chat(req: ChatRequest):
                 logger.info(f"Updated field {field_name} = {value}")
 
         # ENHANCED DOB PROCESSING - Parse natural date formats
-        if 'dob' in updates or any('december' in msg.get('content', '').lower() for msg in session.get_conversation_context(3) if msg.get('role') == 'user'):
-            recent_user_messages = [msg['content'] for msg in session.get_conversation_context(5) if msg.get('role') == 'user']
+        # Check for DOB in recent conversation context
+        recent_user_messages = [msg['content'] for msg in session.get_conversation_context(5) if msg.get('role') == 'user']
+        combined_text = ' '.join(recent_user_messages).lower()
+        
+        # Look for DOB patterns in conversation
+        if ('dob' in updates or 'date' in combined_text or 'birth' in combined_text or 
+            any(month in combined_text for month in ['january', 'february', 'march', 'april', 'may', 'june', 
+                                                   'july', 'august', 'september', 'october', 'november', 'december',
+                                                   'jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'])):
             
-            # Combine recent messages to extract complete DOB
-            combined_text = ' '.join(recent_user_messages).lower()
-            
-            # Extract DOB patterns
             import calendar
             month_names = {month.lower(): idx for idx, month in enumerate(calendar.month_name[1:], 1)}
             month_abbrev = {month.lower(): idx for idx, month in enumerate(calendar.month_abbr[1:], 1)}
             all_months = {**month_names, **month_abbrev}
             
-            # Look for "22nd December" + "2004" pattern
-            day_match = re.search(r'(\d{1,2})(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)', combined_text)
-            year_match = re.search(r'\b(19|20)\d{2}\b', combined_text)
+            # Enhanced DOB extraction patterns
+            dob_patterns = [
+                # "22nd December 2004" or "December 22nd 2004"  
+                r'(\d{1,2})(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*(\d{4})',
+                r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(st|nd|rd|th)?\s*(\d{4})',
+                # "12/22/2004" or "22/12/2004"
+                r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})',
+                # "December 22, 2004"
+                r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2}),?\s*(\d{4})'
+            ]
             
-            if day_match and year_match:
-                day = int(day_match.group(1))
-                month_name = day_match.group(3).lower()
-                year = int(year_match.group(0))
-                
-                month = all_months.get(month_name, 0)
-                if month and 1 <= day <= 31 and 1900 <= year <= 2025:
-                    formatted_dob = f"{year}-{month:02d}-{day:02d}"
-                    session.update_field('dob', formatted_dob, FieldStatus.COLLECTED)
-                    updates['dob'] = formatted_dob
-                    logger.info(f"Auto-assembled DOB: {formatted_dob}")
+            dob_found = False
+            for pattern in dob_patterns:
+                match = re.search(pattern, combined_text, re.IGNORECASE)
+                if match and not dob_found:
+                    try:
+                        groups = match.groups()
+                        day, month, year = None, None, None
+                        
+                        # Pattern 1: "22nd December 2004"
+                        if groups[0].isdigit() and groups[2] in all_months:
+                            day = int(groups[0])
+                            month = all_months[groups[2]]
+                            year = int(groups[3])
+                        
+                        # Pattern 2: "December 22nd 2004"
+                        elif groups[0] in all_months and groups[1].isdigit():
+                            month = all_months[groups[0]]
+                            day = int(groups[1])
+                            year = int(groups[3])
+                        
+                        # Pattern 3: "12/22/2004" - assume MM/DD/YYYY for US format
+                        elif len(groups) == 3 and all(g.isdigit() for g in groups):
+                            month, day, year = int(groups[0]), int(groups[1]), int(groups[2])
+                        
+                        # Pattern 4: "December 22, 2004"
+                        elif groups[0] in all_months and groups[1].isdigit():
+                            month = all_months[groups[0]]
+                            day = int(groups[1])
+                            year = int(groups[2])
+                        
+                        # Validate and format the date
+                        if month and day and year and 1 <= month <= 12 and 1 <= day <= 31 and 1900 <= year <= 2025:
+                            formatted_dob = f"{year}-{month:02d}-{day:02d}"  # ISO format for backend
+                            session.update_field('dob', formatted_dob, FieldStatus.COLLECTED)
+                            updates['dob'] = formatted_dob
+                            logger.info(f"Auto-extracted DOB: {formatted_dob} from: {combined_text}")
+                            dob_found = True
+                            break
+                            
+                    except (ValueError, IndexError) as e:
+                        logger.warning(f"Failed to parse DOB pattern: {e}")
+                        continue
             
         # AUTO-DETECT missing updates from conversation context
         # Check if user provided data that wasn't captured

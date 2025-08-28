@@ -115,11 +115,11 @@ class AdvancedValidator:
         
         cleaned = re.sub(r'\s+', ' ', value.strip()).title()
         
-        # More permissive pattern check - allow more unicode characters and common name patterns
-        if not re.match(r"^[A-Za-z\u00C0-\u017F\s\-\'\.]{1,100}$", cleaned):
-            return ValidationResult(False, "", "Name contains invalid characters", "Please use only letters, spaces, hyphens, and apostrophes")
+        # More permissive pattern check - allow numbers, unicode characters and common name patterns
+        if not re.match(r"^[A-Za-z0-9\u00C0-\u017F\s\-\'\.]{1,100}$", cleaned):
+            return ValidationResult(False, "", "Name contains invalid characters", "Please use letters, numbers, spaces, hyphens, and apostrophes")
         
-        # Must have at least 1 character (removed 2+ parts requirement to allow single names)
+        # Must have at least 1 character
         if len(cleaned.strip()) < 1:
             return ValidationResult(False, "", "Name too short", "Please enter at least 1 character")
         
@@ -168,21 +168,37 @@ class AdvancedValidator:
         if not value or not value.strip():
             return ValidationResult(False, "", "Email cannot be empty", "Please enter your email address")
         
-        # ENHANCED cleaning for speech-to-text errors
+        # SUPER AGGRESSIVE cleaning for speech-to-text errors
         cleaned = value.lower().strip()
         cleaned = re.sub(r'\s+', '', cleaned)  # Remove ALL spaces first
         
-        # Handle "at the rate" and "at rate" patterns
+        # Handle "at the rate" and similar patterns MORE AGGRESSIVELY
         cleaned = re.sub(r'attherate|atrate|at_the_rate|at_rate', '@', cleaned)
-        cleaned = re.sub(r'at', '@', cleaned)  # Simple "at" replacement
+        cleaned = re.sub(r'atthe', '@', cleaned)  # Handle "atthe" without spaces
+        cleaned = re.sub(r'(\w)at(\w)', r'\1@\2', cleaned)  # Handle "wordatword"
         
-        # Handle "dot" patterns  
-        cleaned = re.sub(r'dotcom|dot_com', '.com', cleaned)
+        # Handle cases where @ gets spoken as "at" entirely
+        if '@' not in cleaned:
+            # Look for pattern like "nayanthakkar28gmail"
+            patterns = [
+                (r'(\w+)gmail', r'\1@gmail'),
+                (r'(\w+)yahoo', r'\1@yahoo'),
+                (r'(\w+)hotmail', r'\1@hotmail'),
+                (r'(\w+)outlook', r'\1@outlook'),
+            ]
+            for pattern, replacement in patterns:
+                cleaned = re.sub(pattern, replacement, cleaned)
+        
+        # Handle "dot" patterns super aggressively
+        cleaned = re.sub(r'dotcom|dot_com|dotgmail|dotyahoo', lambda m: '.' + m.group().replace('dot', ''), cleaned)
         cleaned = re.sub(r'dot', '.', cleaned)
         
-        # Fix specific patterns like "om358227@gmailcom" -> "om358227@gmail.com"
+        # Fix domain completions
         cleaned = re.sub(r'@gmailcom$', '@gmail.com', cleaned)
         cleaned = re.sub(r'@yahoocom$', '@yahoo.com', cleaned)
+        cleaned = re.sub(r'@hotmailcom$', '@hotmail.com', cleaned)
+        cleaned = re.sub(r'@gmail$', '@gmail.com', cleaned)
+        cleaned = re.sub(r'@yahoo$', '@yahoo.com', cleaned)
         
         # Handle incomplete emails like "om358227" -> try to detect if it's email-ish
         if '@' not in cleaned and len(cleaned) > 3 and not cleaned.endswith('.com'):
@@ -334,7 +350,7 @@ EXAMPLES:
 """
 
 class GeminiLLM:
-    def __init__(self, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, model_name: str = "gemini-2.5-flash"):
         if not GEMINI_API_KEY:
             raise RuntimeError("GEMINI_API_KEY missing in environment.")
         

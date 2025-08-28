@@ -12,13 +12,29 @@ def clean_speech_input(value: str) -> str:
     
     cleaned = value.strip()
     
-    # Email fixes
+    # SUPER AGGRESSIVE email normalization fixes  
+    # Handle "at the rate" patterns first
     cleaned = re.sub(r'\bat\s*the\s*rate\b', '@', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\bat\s*rate\b', '@', cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r'\s*at\s*', '@', cleaned, flags=re.IGNORECASE) if '@' not in cleaned else cleaned
-    cleaned = re.sub(r'\s*dot\s*com\b', '.com', cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r'\s*dot\s*', '.', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\bthe\s*rate\b', '@', cleaned, flags=re.IGNORECASE)
+    
+    # Handle patterns like "Om Patel 2212 at the rate gmail.com"
+    cleaned = re.sub(r'(\w+\s+\w+)\s+(\d+)\s+at\s+the\s+rate\s+([a-zA-Z]+\.com)', r'\1\2@\3', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'(\w+)\s+(\d+)\s+at\s+the\s+rate\s+([a-zA-Z]+\.com)', r'\1\2@\3', cleaned, flags=re.IGNORECASE)
+    
+    # General "at" to "@" conversion (only if no @ exists)
+    if '@' not in cleaned:
+        cleaned = re.sub(r'(\w+)\s*at\s*([a-zA-Z]+)', r'\1@\2', cleaned, flags=re.IGNORECASE)
+    
+    # Dot corrections
+    cleaned = re.sub(r'\bdot\s*com\b', '.com', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\bdot\s*gmail\s*com\b', '.gmail.com', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\bgmail\s*dot\s*com\b', 'gmail.com', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\bdot\s*', '.', cleaned, flags=re.IGNORECASE)
+    
+    # Fix common domain patterns
     cleaned = re.sub(r'gmail\s*com', 'gmail.com', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'yahoo\s*com', 'yahoo.com', cleaned, flags=re.IGNORECASE)
     
     # Remove extra spaces
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
@@ -40,11 +56,11 @@ def validate_value(ftype: str, value: str, field: Dict[str, Any]) -> Optional[st
         return None  # allow empty if not required
 
     if ftype in ("string", "text", "short_answer", "paragraph"):
-        # More permissive name validation
+        # More permissive name validation - allow numbers in names too
         if field.get("name") == "full_name" or "name" in field.get("name", "").lower():
-            # Allow letters, spaces, hyphens, apostrophes, and common name characters
-            if not re.match(r"^[A-Za-z\s\-\'\.]+$", v):
-                return "Name should only contain letters, spaces, hyphens, and apostrophes."
+            # Allow letters, spaces, hyphens, apostrophes, periods, and numbers
+            if not re.match(r"^[A-Za-z0-9\s\-\'\.\u00C0-\u017F]+$", v):
+                return "Name contains invalid characters. Please use only letters, spaces, hyphens, and apostrophes"
             if len(v.strip()) < 1:
                 return "Name cannot be empty."
         
@@ -54,24 +70,37 @@ def validate_value(ftype: str, value: str, field: Dict[str, Any]) -> Optional[st
         return None
 
     if ftype == "email":
-        # Enhanced email validation
+        # Enhanced email validation with aggressive speech-to-text cleanup
         email_cleaned = v.lower().replace(' ', '')
         
-        # Handle common speech patterns
-        if '@' not in email_cleaned and 'gmail' in email_cleaned:
-            # Try to reconstruct email from parts like "john123gmail.com"
-            parts = re.split(r'(gmail|yahoo|hotmail|outlook)', email_cleaned)
-            if len(parts) >= 3:
-                email_cleaned = f"{parts[0]}@{parts[1]}.com"
+        # Apply our enhanced cleaning first
+        email_cleaned = clean_speech_input(email_cleaned)
         
+        # Handle patterns where domain gets concatenated without @
+        if '@' not in email_cleaned and ('gmail' in email_cleaned or 'yahoo' in email_cleaned or 'hotmail' in email_cleaned):
+            # Try to split and reconstruct email
+            for domain in ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com']:
+                domain_part = domain.replace('.com', '')
+                if domain_part in email_cleaned:
+                    parts = email_cleaned.split(domain_part)
+                    if len(parts) == 2 and parts[0]:
+                        email_cleaned = f"{parts[0]}@{domain}"
+                        break
+        
+        # Handle incomplete domain patterns
+        if '@gmail' in email_cleaned and not email_cleaned.endswith('.com'):
+            email_cleaned = email_cleaned.replace('@gmail', '@gmail.com')
+        if '@yahoo' in email_cleaned and not email_cleaned.endswith('.com'):
+            email_cleaned = email_cleaned.replace('@yahoo', '@yahoo.com')
+            
         if not EMAIL_RE.match(email_cleaned):
             # More helpful error message
             if '@' not in email_cleaned:
-                return "Email must contain @ symbol. Format: name@domain.com"
+                return "Invalid email format. Please use format: name@example.com"
             elif '.' not in email_cleaned.split('@')[1] if '@' in email_cleaned else False:
-                return "Email must contain a domain. Format: name@domain.com" 
+                return "Email must contain a domain. Please use format: name@example.com" 
             else:
-                return "Invalid email format. Please use format: name@domain.com"
+                return "Invalid email format. Please use format: name@example.com"
         return None
 
     if ftype == "phone":
