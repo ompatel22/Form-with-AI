@@ -26,7 +26,7 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}...`}
             required={field.validation?.required}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
           />
         );
 
@@ -39,7 +39,7 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}...`}
             required={field.validation?.required}
             rows={4}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
           />
         );
 
@@ -52,7 +52,7 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             placeholder={field.placeholder || "Enter email address..."}
             required={field.validation?.required}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
           />
         );
 
@@ -65,7 +65,7 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             placeholder={field.placeholder || "Enter phone number..."}
             required={field.validation?.required}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
           />
         );
 
@@ -80,7 +80,7 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             required={field.validation?.required}
             min={field.validation?.min_value}
             max={field.validation?.max_value}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
           />
         );
 
@@ -92,7 +92,7 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             value={value}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.validation?.required}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
           />
         );
 
@@ -104,7 +104,7 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             value={value}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.validation?.required}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
           />
         );
 
@@ -117,7 +117,7 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             placeholder={field.placeholder || "https://example.com"}
             required={field.validation?.required}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
           />
         );
 
@@ -128,7 +128,7 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             value={value}
             onChange={(e) => handleFieldChange(field.name, e.target.value)}
             required={field.validation?.required}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
           >
             <option value="">Select an option...</option>
             {field.options?.map((option, index) => (
@@ -141,9 +141,9 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
 
       case 'multiple_choice':
         return (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {field.options?.map((option, index) => (
-              <label key={index} className="flex items-center">
+              <label key={index} className="flex items-center cursor-pointer group">
                 <input
                   type="radio"
                   name={field.name}
@@ -151,9 +151,9 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
                   checked={value === option}
                   onChange={(e) => handleFieldChange(field.name, e.target.value)}
                   required={field.validation?.required}
-                  className="mr-3 text-blue-600"
+                  className="mr-3 text-blue-500 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
                 />
-                <span className="text-gray-700">{option}</span>
+                <span className="text-gray-200 group-hover:text-white transition-colors">{option}</span>
               </label>
             ))}
           </div>
@@ -162,9 +162,9 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
       case 'checkboxes':
         const checkedValues = Array.isArray(value) ? value : (value ? [value] : []);
         return (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {field.options?.map((option, index) => (
-              <label key={index} className="flex items-center">
+              <label key={index} className="flex items-center cursor-pointer group">
                 <input
                   type="checkbox"
                   name={`${field.name}[]`}
@@ -179,9 +179,9 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
                     }
                     handleFieldChange(field.name, newValues);
                   }}
-                  className="mr-3 text-blue-600"
+                  className="mr-3 text-blue-500 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
                 />
-                <span className="text-gray-700">{option}</span>
+                <span className="text-gray-200 group-hover:text-white transition-colors">{option}</span>
               </label>
             ))}
           </div>
@@ -195,14 +195,14 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
           scaleOptions.push(i);
         }
         return (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between text-sm text-gray-600">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-sm text-gray-400">
               <span>{field.scale_min_label || scaleMin}</span>
               <span>{field.scale_max_label || scaleMax}</span>
             </div>
             <div className="flex items-center justify-between">
               {scaleOptions.map((option) => (
-                <label key={option} className="flex flex-col items-center">
+                <label key={option} className="flex flex-col items-center cursor-pointer group">
                   <input
                     type="radio"
                     name={field.name}
@@ -210,12 +210,30 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
                     checked={parseInt(value) === option}
                     onChange={(e) => handleFieldChange(field.name, parseInt(e.target.value))}
                     required={field.validation?.required}
-                    className="mb-1 text-blue-600"
+                    className="mb-2 text-blue-500 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
                   />
-                  <span className="text-sm text-gray-700">{option}</span>
+                  <span className="text-sm text-gray-300 group-hover:text-white transition-colors">{option}</span>
                 </label>
               ))}
             </div>
+          </div>
+        );
+
+      case 'password':
+        return (
+          <div>
+            <input
+              type="password"
+              name={field.name}
+              value={value}
+              onChange={(e) => handleFieldChange(field.name, e.target.value)}
+              placeholder="Enter your password (type manually for security)..."
+              required={field.validation?.required}
+              className="w-full p-3 border border-gray-600 bg-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+            />
+            <p className="text-xs text-yellow-400 mt-1">
+              💡 For security, please type your password manually rather than speaking it
+            </p>
           </div>
         );
 
@@ -230,13 +248,13 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
             }}
             required={field.validation?.required}
             accept={field.allowed_file_types ? field.allowed_file_types.join(',') : undefined}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            className="w-full p-3 border border-gray-600 bg-gray-700 text-white rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-600/20 file:text-blue-300 hover:file:bg-blue-600/30"
           />
         );
 
       default:
         return (
-          <div className="p-3 bg-gray-100 rounded-lg text-gray-600">
+          <div className="p-3 bg-gray-700 border border-gray-600 rounded-lg text-gray-300">
             Unsupported field type: {field.type}
           </div>
         );
@@ -247,28 +265,31 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
   const sortedFields = [...formSchema.fields].sort((a, b) => (a.order || 0) - (b.order || 0));
 
   return (
-    <div className="flex-1 bg-gradient-to-b from-blue-50 to-white p-10 rounded-l-2xl">
+    <div className="flex-1 bg-gradient-to-b from-gray-700 to-gray-800 p-10 rounded-l-2xl">
       <div className="mb-8">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-2">
+        <h2 className="text-2xl font-semibold text-white mb-2">
           {formSchema.title}
         </h2>
         {formSchema.description && (
-          <p className="text-gray-600">{formSchema.description}</p>
+          <p className="text-gray-300">{formSchema.description}</p>
         )}
       </div>
       
       <form onSubmit={onSubmit} className="space-y-6">
         {sortedFields.map((field) => (
           <div key={field.id || field.name}>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-gray-200 mb-2">
               {field.label}
               {field.validation?.required && (
-                <span className="text-red-500 ml-1">*</span>
+                <span className="text-red-400 ml-1">*</span>
+              )}
+              {!field.validation?.required && (
+                <span className="text-gray-400 ml-1">(optional)</span>
               )}
             </label>
             
             {field.description && (
-              <p className="text-sm text-gray-500 mb-2">{field.description}</p>
+              <p className="text-sm text-gray-400 mb-2">{field.description}</p>
             )}
             
             {renderField(field)}
@@ -277,9 +298,9 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
         
         <button
           type="submit"
-          className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 transition-all duration-300 shadow-md hover:shadow-lg"
+          className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-500 transition-all duration-300 shadow-md hover:shadow-lg font-medium"
         >
-          Submit
+          Submit Form
         </button>
       </form>
     </div>

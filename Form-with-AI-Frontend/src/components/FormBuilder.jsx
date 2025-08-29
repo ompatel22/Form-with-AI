@@ -1,19 +1,20 @@
 import React, { useState, useEffect } from 'react';
 
 const FIELD_TYPES = [
-  { value: 'short_answer', label: 'Short Answer' },
-  { value: 'paragraph', label: 'Paragraph' },
-  { value: 'email', label: 'Email' },
-  { value: 'phone', label: 'Phone Number' },
-  { value: 'number', label: 'Number' },
-  { value: 'date', label: 'Date' },
-  { value: 'time', label: 'Time' },
-  { value: 'url', label: 'URL' },
-  { value: 'multiple_choice', label: 'Multiple Choice' },
-  { value: 'checkboxes', label: 'Checkboxes' },
-  { value: 'dropdown', label: 'Dropdown' },
-  { value: 'linear_scale', label: 'Linear Scale' },
-  { value: 'file_upload', label: 'File Upload' },
+  { value: 'short_answer', label: '📝 Short Answer', icon: '📝' },
+  { value: 'paragraph', label: '📄 Paragraph', icon: '📄' },
+  { value: 'email', label: '📧 Email', icon: '📧' },
+  { value: 'phone', label: '📞 Phone Number', icon: '📞' },
+  { value: 'password', label: '🔒 Password', icon: '🔒' },
+  { value: 'number', label: '🔢 Number', icon: '🔢' },
+  { value: 'date', label: '📅 Date', icon: '📅' },
+  { value: 'time', label: '⏰ Time', icon: '⏰' },
+  { value: 'url', label: '🌐 URL', icon: '🌐' },
+  { value: 'multiple_choice', label: '🔘 Multiple Choice', icon: '🔘' },
+  { value: 'checkboxes', label: '☑️ Checkboxes', icon: '☑️' },
+  { value: 'dropdown', label: '📋 Dropdown', icon: '📋' },
+  { value: 'linear_scale', label: '📊 Linear Scale', icon: '📊' },
+  { value: 'file_upload', label: '📎 File Upload', icon: '📎' },
 ];
 
 export default function FormBuilder({ onClose, onFormCreated }) {
@@ -127,14 +128,17 @@ export default function FormBuilder({ onClose, onFormCreated }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b border-gray-200">
+    <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
+      <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6 border-b border-gray-700 bg-gradient-to-r from-blue-600/20 to-purple-600/20">
           <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold text-gray-800">Create New Form</h2>
+            <div>
+              <h2 className="text-2xl font-bold text-white">🚀 Create AI-Powered Form</h2>
+              <p className="text-gray-300 text-sm mt-1">Build intelligent forms with conversational AI assistance</p>
+            </div>
             <button
               onClick={onClose}
-              className="text-gray-500 hover:text-gray-700 text-2xl"
+              className="text-gray-400 hover:text-white text-2xl transition-colors"
             >
               ×
             </button>
@@ -143,46 +147,52 @@ export default function FormBuilder({ onClose, onFormCreated }) {
 
         <form onSubmit={handleSubmit} className="p-6">
           {/* Form Title and Description */}
-          <div className="mb-6 space-y-4">
+          <div className="mb-8 space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-200 mb-2">
                 Form Title *
               </label>
               <input
                 type="text"
                 value={formTitle}
                 onChange={(e) => setFormTitle(e.target.value)}
-                placeholder="Enter form title..."
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                placeholder="e.g., Customer Feedback Survey, Registration Form..."
+                className="w-full p-4 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-all"
                 required
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-200 mb-2">
                 Description
               </label>
               <textarea
                 value={formDescription}
                 onChange={(e) => setFormDescription(e.target.value)}
-                placeholder="Enter form description..."
+                placeholder="Briefly describe what this form is for..."
                 rows={3}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                className="w-full p-4 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-all"
               />
             </div>
           </div>
 
-          {/* Field Types */}
-          <div className="mb-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Add Fields</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          {/* Enhanced Field Types */}
+          <div className="mb-8">
+            <h3 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
+              <span>🔧</span>
+              Add Form Fields
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
               {FIELD_TYPES.map((type) => (
                 <button
                   key={type.value}
                   type="button"
                   onClick={() => addField(type.value)}
-                  className="p-2 text-sm border border-gray-300 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors"
+                  className="p-4 text-sm border border-gray-600 bg-gray-700 text-white rounded-lg hover:bg-gray-600 hover:border-blue-400 transition-all duration-200 group flex flex-col items-center gap-2"
                 >
-                  {type.label}
+                  <span className="text-lg group-hover:scale-110 transition-transform">
+                    {type.icon}
+                  </span>
+                  <span className="font-medium">{type.label.replace(/^.+\s/, '')}</span>
                 </button>
               ))}
             </div>

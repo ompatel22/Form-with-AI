@@ -11,32 +11,20 @@ function App() {
   const [inputText, setInputText] = useState("");
   const [status, setStatus] = useState("idle");
   const [pendingAudio, setPendingAudio] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
   
-  // Dynamic form state
+  // Dynamic form state only (no legacy)
   const [currentForm, setCurrentForm] = useState(null);
   const [formData, setFormData] = useState({});
-  const [showFormManager, setShowFormManager] = useState(false);
-  const [isLegacyMode, setIsLegacyMode] = useState(true); // Start with legacy form
+  const [showFormManager, setShowFormManager] = useState(true); // Start with form manager
   
-  // Session Management - Generate unique session IDs for each form/mode
+  // Session Management - Generate unique session IDs for each form
   const [sessionId, setSessionId] = useState(() => 
-    `legacy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    `form_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   );
   
-  // Legacy form data
-  const [legacyFormData, setLegacyFormData] = useState({
-    fullName: "",
-    email: "",
-    phone: "",
-    dob: "",
-  });
-  
-  const [sessionStatus, setSessionStatus] = useState({
-    completed: false,
-    current_field: null,
-    frustration_level: 0,
-  });
   const initialized = useRef(false);
+  const currentAudio = useRef(null);
 
   const b64ToBlob = (b64, mime) => {
     const bytes = atob(b64);
@@ -65,20 +53,32 @@ function App() {
       const blob = b64ToBlob(b64, "audio/wav");
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
+      
+      // Stop any currently playing audio
+      if (currentAudio.current) {
+        currentAudio.current.pause();
+        currentAudio.current = null;
+      }
+      
+      currentAudio.current = audio;
+      setIsPlaying(true);
 
       await audio.play();
       setPendingAudio(null);
 
-      // AUTO-LISTENING: Automatically start listening after TTS completes
+      // ENHANCED AUTO-LISTENING: Better timing and delay handling
       audio.addEventListener('ended', () => {
+        setIsPlaying(false);
+        currentAudio.current = null;
+        
+        // Add longer delay to allow for natural conversation flow
         setTimeout(() => {
-          // Auto-start microphone after a brief pause
           console.log("🎙️ Auto-starting microphone after TTS completion");
           handleMic();
-        }, 500); // 500ms delay to feel natural
+        }, 800); // Increased delay to 800ms for better UX
       });
 
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (err) {
       console.warn("Audio playback failed, using speech synthesis:", err);
       setPendingAudio({ b64, text });
@@ -90,165 +90,74 @@ function App() {
         
         // AUTO-LISTENING: Also handle for speech synthesis
         utterance.onend = () => {
+          setIsPlaying(false);
           setTimeout(() => {
             console.log("🎙️ Auto-starting microphone after speech synthesis");
             handleMic();
-          }, 500);
+          }, 800);
         };
         
+        setIsPlaying(true);
         window.speechSynthesis.speak(utterance);
       }
     }
   };
 
-  // Enhanced form data update function for legacy forms
-  const updateLegacyFormData = (updates) => {
-    console.log("Raw updates from backend:", updates);
-
-    if (!updates || typeof updates !== "object") {
-      console.warn("Invalid updates object:", updates);
-      return;
+  // SKIP AUDIO FUNCTION - Allow users to skip AI response
+  const skipAudio = () => {
+    if (currentAudio.current) {
+      currentAudio.current.pause();
+      currentAudio.current = null;
     }
-
-    setLegacyFormData((prev) => {
-      const newFormData = { ...prev };
-
-      const fieldMappings = {
-        full_name: "fullName",
-        fullName: "fullName",
-        email: "email",
-        phone: "phone",
-        dob: "dob",
-      };
-
-      Object.entries(updates).forEach(([key, fieldData]) => {
-        console.log(`Processing field: ${key}`, fieldData);
-
-        const frontendFieldName = fieldMappings[key];
-
-        if (frontendFieldName) {
-          let value = "";
-
-          if (typeof fieldData === "string") {
-            value = fieldData;
-          } else if (fieldData && typeof fieldData === "object") {
-            value =
-              fieldData.value ||
-              fieldData.collected ||
-              fieldData.data ||
-              (fieldData.status === "collected" ? fieldData.value : "") ||
-              "";
-          }
-
-          if (
-            value &&
-            typeof value === "string" &&
-            value.trim() &&
-            value !== "[object Object]"
-          ) {
-            const cleanValue = value.trim();
-            console.log(`✅ Updating ${frontendFieldName}: "${cleanValue}"`);
-            newFormData[frontendFieldName] = cleanValue;
-          }
-        }
-      });
-
-      // FORMAT PHONE NUMBER
-      if (newFormData.phone && !newFormData.phone.includes("(")) {
-        const digits = newFormData.phone.replace(/\D/g, "");
-        if (digits.length === 10) {
-          newFormData.phone = `(${digits.slice(0, 3)}) ${digits.slice(
-            3,
-            6
-          )}-${digits.slice(6)}`;
-        }
-      }
-
-      console.log("Final updated legacy form data:", newFormData);
-      return newFormData;
-    });
+    
+    // Stop speech synthesis if running
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    }
+    
+    setIsPlaying(false);
+    setPendingAudio(null);
+    
+    // Immediately start listening after skip
+    setTimeout(() => {
+      console.log("🎙️ Starting microphone after skip");
+      handleMic();
+    }, 200);
   };
 
   // Dynamic form data update function
   const updateDynamicFormData = (fieldName, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [fieldName]: value
-    }));
-  };
-
-  // Legacy backend chat
-  const legacyBackendChat = async (msg) => {
-    setStatus("waiting...");
-    try {
-      const res = await fetch(`${API}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, message: msg }),
-      });
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      }
-
-      const data = await res.json();
-      console.log("Backend response:", data);
-
-      setStatus("idle");
-
-      if (data.reply) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            text: data.reply,
-            who: "agent",
-            timestamp: new Date().toISOString(),
-            action: data.action,
-            tone: data.tone,
-          },
-        ]);
-      }
-
-      if (data.session_status) {
-        setSessionStatus(data.session_status);
-      }
-
-      if (data.updates) {
-        updateLegacyFormData(data.updates);
-      }
-
-      if (data.audio_b64 || data.reply) {
-        await playBase64WavOrFallback(data.audio_b64, data.reply);
-      }
-    } catch (err) {
-      console.error("Chat error:", err);
-      setStatus("error");
-      setMessages((prev) => [
+    setFormData(prev => {
+      const updated = {
         ...prev,
-        {
-          text: `Connection error: ${err.message}. Please check if the backend is running.`,
-          who: "agent",
-          timestamp: new Date().toISOString(),
-          isError: true,
-        },
-      ]);
-    }
+        [fieldName]: value
+      };
+      console.log("Form data updated:", updated);
+      return updated;
+    });
   };
 
-  // Dynamic backend chat
-  const dynamicBackendChat = async (msg) => {
+  // ENHANCED Dynamic backend chat with manual field detection
+  const dynamicBackendChat = async (msg, includeFormData = true) => {
     if (!currentForm) return;
 
     setStatus("waiting...");
     try {
+      const requestBody = { 
+        session_id: sessionId, 
+        form_id: currentForm.id,
+        message: msg 
+      };
+
+      // MANUAL FORM FIELD DETECTION - Include current form data to detect manual entries
+      if (includeFormData && Object.keys(formData).length > 0) {
+        requestBody.manual_form_data = formData;
+      }
+
       const res = await fetch(`${API}/dynamic-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          session_id: sessionId, 
-          form_id: currentForm.id,
-          message: msg 
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!res.ok) {
@@ -316,14 +225,10 @@ function App() {
     ]);
     setInputText("");
 
-    // Use appropriate chat function
-    if (isLegacyMode) {
-      await legacyBackendChat(message);
-    } else {
-      await dynamicBackendChat(message);
-    }
+    await dynamicBackendChat(message);
   };
 
+  // ENHANCED MICROPHONE HANDLING - Better idle state management
   const handleMic = () => {
     const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Rec) {
@@ -337,6 +242,10 @@ function App() {
     rec.lang = "en-US";
     rec.interimResults = false;
     rec.maxAlternatives = 1;
+    
+    // ENHANCED CONFIGURATION to reduce idle issues
+    rec.continuous = false;
+    rec.maxRecognitionTime = 10000; // 10 seconds max
 
     setStatus("listening");
 
@@ -354,11 +263,7 @@ function App() {
         },
       ]);
       
-      if (isLegacyMode) {
-        legacyBackendChat(text);
-      } else {
-        dynamicBackendChat(text);
-      }
+      dynamicBackendChat(text);
     };
 
     rec.onerror = (e) => {
@@ -380,6 +285,12 @@ function App() {
       setStatus("idle");
     };
 
+    // Handle no speech timeout
+    rec.onnomatch = () => {
+      console.log("No speech detected");
+      setStatus("idle");
+    };
+
     try {
       rec.start();
     } catch (err) {
@@ -395,74 +306,6 @@ function App() {
     if (pendingAudio) {
       await playBase64WavOrFallback(pendingAudio.b64, pendingAudio.text);
       setPendingAudio(null);
-    }
-  };
-
-  // Legacy form submission
-  const handleLegacySubmit = async (e) => {
-    e.preventDefault();
-
-    const requiredFields = ["fullName", "email", "phone", "dob"];
-    const emptyFields = requiredFields.filter(
-      (field) => !legacyFormData[field] || !legacyFormData[field].trim()
-    );
-
-    if (emptyFields.length > 0) {
-      const fieldLabels = {
-        fullName: "Full Name",
-        email: "Email",
-        phone: "Phone",
-        dob: "Date of Birth",
-      };
-
-      const missingLabels = emptyFields
-        .map((field) => fieldLabels[field])
-        .join(", ");
-      alert(`Please fill in the following fields: ${missingLabels}`);
-      return;
-    }
-
-    try {
-      setStatus("submitting");
-
-      const submissionData = {
-        session_id: sessionId,
-        full_name: legacyFormData.fullName,
-        email: legacyFormData.email,
-        phone: legacyFormData.phone,
-        dob: legacyFormData.dob,
-      };
-
-      const res = await fetch(`${API}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(submissionData),
-      });
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      }
-
-      const result = await res.json();
-      console.log("Submission result:", result);
-
-      alert("Form submitted successfully! ✅");
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: "Form has been successfully submitted! Thank you for your information.",
-          who: "agent",
-          timestamp: new Date().toISOString(),
-          isSuccess: true,
-        },
-      ]);
-
-      setSessionStatus((prev) => ({ ...prev, completed: true }));
-    } catch (err) {
-      console.error("Submission error:", err);
-      alert(`Error submitting form: ${err.message}`);
-    } finally {
-      setStatus("idle");
     }
   };
 
@@ -520,38 +363,10 @@ function App() {
     setCurrentForm(form);
     setFormData({});
     setMessages([]);
-    setIsLegacyMode(false);
     setShowFormManager(false);
     
     // Start conversation for the new form with new session
-    setTimeout(() => dynamicBackendChat(""), 100); // Small delay to ensure sessionId is updated
-  };
-
-  const switchToLegacyMode = () => {
-    // Create unique session ID for legacy mode
-    const newSessionId = `legacy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    setSessionId(newSessionId);
-    
-    setIsLegacyMode(true);
-    setCurrentForm(null);
-    setFormData({});
-    setMessages([]);
-    
-    // Reset legacy form
-    setLegacyFormData({
-      fullName: "",
-      email: "",
-      phone: "",
-      dob: "",
-    });
-    setSessionStatus({
-      completed: false,
-      current_field: null,
-      frustration_level: 0,
-    });
-
-    // Start legacy conversation with new session
-    setTimeout(() => legacyBackendChat(""), 100); // Small delay to ensure sessionId is updated
+    setTimeout(() => dynamicBackendChat("", false), 200); // Don't include form data on initial load
   };
 
   const handleReset = async () => {
@@ -566,23 +381,10 @@ function App() {
       setMessages([]);
       setStatus("idle");
       setPendingAudio(null);
-
-      if (isLegacyMode) {
-        setLegacyFormData({
-          fullName: "",
-          email: "",
-          phone: "",
-          dob: "",
-        });
-        setSessionStatus({
-          completed: false,
-          current_field: null,
-          frustration_level: 0,
-        });
-        await legacyBackendChat("");
-      } else if (currentForm) {
+      
+      if (currentForm) {
         setFormData({});
-        await dynamicBackendChat("");
+        await dynamicBackendChat("", false);
       }
     } catch (err) {
       console.error("Reset error:", err);
@@ -590,35 +392,49 @@ function App() {
     }
   };
 
-  // Initialize conversation
+  const goBackToFormManager = () => {
+    setShowFormManager(true);
+    setCurrentForm(null);
+    setFormData({});
+    setMessages([]);
+    setStatus("idle");
+    
+    // Stop any playing audio
+    if (currentAudio.current) {
+      currentAudio.current.pause();
+      currentAudio.current = null;
+    }
+    setIsPlaying(false);
+    setPendingAudio(null);
+  };
+
+  // Initialize conversation when form is selected
   useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
-
-    const startConversation = async () => {
-      try {
-        setStatus("initializing");
-        await fetch(`${API}/reset?session_id=${sessionId}`, { method: "POST" });
-        
-        if (isLegacyMode) {
-          await legacyBackendChat("");
+    if (currentForm && !initialized.current) {
+      initialized.current = true;
+      
+      const startConversation = async () => {
+        try {
+          setStatus("initializing");
+          await fetch(`${API}/reset?session_id=${sessionId}`, { method: "POST" });
+          await dynamicBackendChat("", false);
+        } catch (err) {
+          console.error("Initialization error:", err);
+          setStatus("error");
+          setMessages([
+            {
+              text: "Failed to connect to the server. Please check if the backend is running on http://127.0.0.1:8000",
+              who: "agent",
+              timestamp: new Date().toISOString(),
+              isError: true,
+            },
+          ]);
         }
-      } catch (err) {
-        console.error("Initialization error:", err);
-        setStatus("error");
-        setMessages([
-          {
-            text: "Failed to connect to the server. Please check if the backend is running on http://127.0.0.1:8000",
-            who: "agent",
-            timestamp: new Date().toISOString(),
-            isError: true,
-          },
-        ]);
-      }
-    };
+      };
 
-    startConversation();
-  }, [isLegacyMode]);
+      startConversation();
+    }
+  }, [currentForm]);
 
   if (showFormManager) {
     return (
@@ -630,85 +446,64 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 p-4 md:p-8 font-inter antialiased">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-4 md:p-8 font-inter antialiased">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
+        {/* Header with Dark Theme */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl md:text-4xl font-bold text-gray-800 mb-4 tracking-tight">
-            {isLegacyMode 
-              ? "Student Registration — Conversational Agent" 
-              : currentForm 
-                ? `${currentForm.title} — Conversational Agent`
-                : "Form Filling — Conversational Agent"
+          <h1 className="text-3xl md:text-4xl font-bold text-white mb-4 tracking-tight">
+            {currentForm 
+              ? `${currentForm.title} — AI Assistant`
+              : "AI-Powered Form Builder"
             }
           </h1>
           
-          {/* Mode Switcher */}
+          {/* Navigation */}
           <div className="flex items-center justify-center gap-4 mb-4">
             <button
-              onClick={switchToLegacyMode}
-              className={`px-4 py-2 rounded-lg transition-colors ${
-                isLegacyMode
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-              }`}
+              onClick={goBackToFormManager}
+              className="px-6 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors shadow-md"
             >
-              Legacy Form
+              ← Back to Forms
             </button>
-            <button
-              onClick={() => setShowFormManager(true)}
-              className={`px-4 py-2 rounded-lg transition-colors ${
-                !isLegacyMode
-                  ? "bg-purple-600 text-white"
-                  : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-              }`}
-            >
-              Dynamic Forms
-            </button>
+            
+            {currentForm && (
+              <button
+                onClick={handleReset}
+                className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-500 transition-colors shadow-md"
+              >
+                Reset Chat
+              </button>
+            )}
           </div>
           
-          <div className="flex items-center justify-center gap-4 text-sm text-gray-600">
+          <div className="flex items-center justify-center gap-4 text-sm text-gray-300">
             <span
               className={`px-3 py-1 rounded-full ${
                 status === "idle"
-                  ? "bg-green-100 text-green-700"
+                  ? "bg-green-500/20 text-green-300 border border-green-500/30"
                   : status === "waiting..."
-                  ? "bg-blue-100 text-blue-700"
+                  ? "bg-blue-500/20 text-blue-300 border border-blue-500/30"
                   : status === "listening"
-                  ? "bg-purple-100 text-purple-700"
+                  ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
                   : status === "error"
-                  ? "bg-red-100 text-red-700"
-                  : "bg-gray-100 text-gray-700"
+                  ? "bg-red-500/20 text-red-300 border border-red-500/30"
+                  : "bg-gray-500/20 text-gray-300 border border-gray-500/30"
               }`}
             >
               Status: {status}
             </span>
-            {sessionStatus.current_field && isLegacyMode && (
-              <span className="px-3 py-1 bg-blue-50 text-blue-700 rounded-full">
-                Focus: {sessionStatus.current_field.replace("_", " ")}
-              </span>
-            )}
-            {sessionStatus.completed && isLegacyMode && (
-              <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full">
-                ✓ Complete
+            
+            {isPlaying && (
+              <span className="px-3 py-1 bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 rounded-full">
+                🔊 AI Speaking...
               </span>
             )}
           </div>
         </div>
 
-        {/* Main Content */}
-        <div className="flex flex-col lg:flex-row gap-6 shadow-2xl rounded-2xl overflow-hidden bg-white">
-          {isLegacyMode ? (
-            <FormSide
-              formData={legacyFormData}
-              setFormData={(field, value) => 
-                setLegacyFormData(prev => ({ ...prev, [field]: value }))
-              }
-              handleSubmit={handleLegacySubmit}
-              sessionStatus={sessionStatus}
-              status={status}
-            />
-          ) : currentForm ? (
+        {/* Main Content with Dark Theme */}
+        <div className="flex flex-col lg:flex-row gap-6 shadow-2xl rounded-2xl overflow-hidden bg-gray-800 border border-gray-700">
+          {currentForm ? (
             <DynamicFormRenderer
               formSchema={currentForm}
               formData={formData}
@@ -716,18 +511,18 @@ function App() {
               onSubmit={handleDynamicSubmit}
             />
           ) : (
-            <div className="flex-1 bg-gradient-to-b from-blue-50 to-white p-10 rounded-l-2xl flex items-center justify-center">
+            <div className="flex-1 bg-gradient-to-b from-gray-700 to-gray-800 p-10 rounded-l-2xl flex items-center justify-center">
               <div className="text-center">
-                <div className="text-6xl mb-4">🚀</div>
-                <h3 className="text-xl font-semibold text-gray-800 mb-2">
-                  Ready to Get Started
+                <div className="text-6xl mb-4">🤖</div>
+                <h3 className="text-xl font-semibold text-white mb-2">
+                  AI Assistant Ready
                 </h3>
-                <p className="text-gray-600 mb-6">
-                  Select a form to begin your conversational form filling experience
+                <p className="text-gray-300 mb-6">
+                  Select a form to begin your conversational form filling experience with AI
                 </p>
                 <button
                   onClick={() => setShowFormManager(true)}
-                  className="bg-purple-600 text-white px-6 py-3 rounded-lg hover:bg-purple-700 transition-colors shadow-md"
+                  className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-500 transition-colors shadow-md"
                 >
                   Choose Form
                 </button>
@@ -745,7 +540,8 @@ function App() {
             pendingAudio={pendingAudio}
             handleAudioEnable={handleAudioEnable}
             onReset={handleReset}
-            sessionStatus={sessionStatus}
+            isPlaying={isPlaying}
+            onSkipAudio={skipAudio}
           />
         </div>
       </div>

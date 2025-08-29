@@ -216,67 +216,110 @@ class AdvancedValidator:
         return ValidationResult(True, formatted, "", "")
     
     @staticmethod
+    def validate_password(value: str) -> ValidationResult:
+        if not value or not value.strip():
+            return ValidationResult(False, "", "Password cannot be empty", "Please provide your password")
+        
+        cleaned = value.strip()
+        
+        # Basic password validation - can be enhanced based on requirements
+        if len(cleaned) < 6:
+            return ValidationResult(False, "", "Password too short", "Password must be at least 6 characters long")
+        
+        if len(cleaned) > 128:
+            return ValidationResult(False, "", "Password too long", "Password must be less than 128 characters")
+        
+        # Note: For security, we should validate but not store passwords in plain text
+        # This is just basic validation - actual password handling should be secure
+        return ValidationResult(True, cleaned, "", "")
+    
+    @staticmethod
     def validate_date(value: str) -> ValidationResult:
         if not value or not value.strip():
             return ValidationResult(False, "", "Date cannot be empty", "Please provide the date")
         
         cleaned = value.strip()
         
-        # Enhanced natural date parsing
+        # Enhanced natural date parsing with better context awareness
         import calendar
         month_names = {month.lower(): idx for idx, month in enumerate(calendar.month_name[1:], 1)}
         month_abbrev = {month.lower(): idx for idx, month in enumerate(calendar.month_abbr[1:], 1)}
         all_months = {**month_names, **month_abbrev}
         
-        # Multiple date patterns
+        # Enhanced date patterns with more comprehensive matching
         date_patterns = [
-            # "22nd December 2004" or "December 22nd 2004"  
-            r'(\d{1,2})(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*(\d{4})',
-            r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(st|nd|rd|th)?\s*(\d{4})',
-            # "12/22/2004" or "22/12/2004"
-            r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})',
-            # "December 22, 2004"
-            r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2}),?\s*(\d{4})'
+            # Natural language patterns like "22nd December 2004", "December 22nd 2004"
+            (r'(\d{1,2})(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*(\d{4})', 'day_month_year'),
+            (r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(st|nd|rd|th)?\s*(\d{4})', 'month_day_year'),
+            # Date with just day after month/year context: "December 2004" + "22"
+            (r'(\d{1,2})(?:\s*$)', 'day_only'),
+            # Standard formats
+            (r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})', 'numeric'),
+            (r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2}),?\s*(\d{4})', 'month_day_comma_year'),
+            # ISO format
+            (r'(\d{4})-(\d{1,2})-(\d{1,2})', 'iso'),
         ]
         
-        for pattern in date_patterns:
+        # Try each pattern
+        for pattern, pattern_type in date_patterns:
             match = re.search(pattern, cleaned.lower(), re.IGNORECASE)
             if match:
                 try:
                     groups = match.groups()
                     day, month, year = None, None, None
                     
-                    # Pattern 1: "22nd December 2004"
-                    if groups[0].isdigit() and groups[2].lower() in all_months:
+                    if pattern_type == 'day_month_year':
                         day = int(groups[0])
                         month = all_months[groups[2].lower()]
                         year = int(groups[3])
                     
-                    # Pattern 2: "December 22nd 2004"
-                    elif groups[0].lower() in all_months and groups[1].isdigit():
+                    elif pattern_type == 'month_day_year':
                         month = all_months[groups[0].lower()]
                         day = int(groups[1])
                         year = int(groups[3])
                     
-                    # Pattern 3: "12/22/2004" - assume MM/DD/YYYY for US format
-                    elif len(groups) == 3 and all(g.isdigit() for g in groups):
+                    elif pattern_type == 'day_only':
+                        # Extract day only - assume previous context has month/year
+                        day = int(groups[0])
+                        # For day-only, we need to use a default or error
+                        if 1 <= day <= 31:
+                            return ValidationResult(False, "", "Please provide the complete date", "I need the full date including month and year")
+                    
+                    elif pattern_type == 'numeric':
+                        # Assume MM/DD/YYYY format
                         month, day, year = int(groups[0]), int(groups[1]), int(groups[2])
                     
-                    # Pattern 4: "December 22, 2004"
-                    elif groups[0].lower() in all_months and groups[1].isdigit():
+                    elif pattern_type == 'month_day_comma_year':
                         month = all_months[groups[0].lower()]
                         day = int(groups[1])
                         year = int(groups[2])
                     
-                    # Validate ranges
-                    if month and day and year and 1 <= month <= 12 and 1 <= day <= 31 and 1900 <= year <= datetime.now().year + 10:
-                        formatted_date = f"{month:02d}/{day:02d}/{year}"
-                        return ValidationResult(True, formatted_date, "", "")
+                    elif pattern_type == 'iso':
+                        year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+                    
+                    # Validate date components
+                    if month and day and year:
+                        # Validate ranges
+                        if not (1 <= month <= 12):
+                            continue
+                        if not (1 <= day <= 31):
+                            continue
+                        if not (1900 <= year <= datetime.now().year + 10):
+                            continue
                         
-                except (ValueError, IndexError):
+                        # Validate actual date (handles month-specific day limits)
+                        try:
+                            import datetime as dt
+                            dt.date(year, month, day)
+                            formatted_date = f"{month:02d}/{day:02d}/{year}"
+                            return ValidationResult(True, formatted_date, "", "")
+                        except ValueError:
+                            continue
+                        
+                except (ValueError, IndexError, KeyError):
                     continue
         
-        return ValidationResult(False, "", "Invalid date format", "Please use format like 'January 1, 2000' or '01/01/2000'")
+        return ValidationResult(False, "", "Invalid date format", "Please use format like 'January 1, 2000', '01/01/2000', or 'January 1st, 2000'")
 
 class EnhancedDynamicFormConversation:
     """Enhanced conversational form handler with LLM integration"""
@@ -380,8 +423,9 @@ FIELD PROCESSING RULES:
 2. VALIDATION: Extract and validate field values strictly
    - Names: Extract proper names from conversational text
    - Emails: Handle speech-to-text email errors
-   - Phones: Format consistently, handle repetition patterns
-   - Dates: Accept natural formats like "January 1st, 2000"
+   - Phones: Format consistently, handle repetition patterns like "3 times 5" → "555"
+   - Dates: CONTEXT AWARE - Remember previous month/year mentions. Accept "22" if December 2004 was mentioned before
+   - Passwords: Validate but remind users to type manually for security
    - MCQ/Checkboxes: Must match provided options exactly
 
 3. EXTRACTION: Pull relevant info from any part of user's message
@@ -392,10 +436,12 @@ FIELD PROCESSING RULES:
 CONVERSATION MANAGEMENT:
 - Ask for ONE field at a time unless user provides multiple
 - Handle field corrections immediately when requested
-- Allow skipping non-required fields
+- ASK FOR NON-REQUIRED FIELDS TOO: Don't skip optional fields automatically - ask user if they want to provide them
+- Allow users to skip non-required fields when they explicitly refuse
 - Politely insist on required fields
 - Remember user's name and use it naturally
 - Provide encouraging feedback
+- For non-required fields, use phrases like "This field is optional, but would you like to provide...?"
 
 RESPONSE FORMAT (JSON ONLY):
 {{
@@ -555,7 +601,7 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
             }
     
     def _build_llm_context(self, user_input: str, intent: Dict[str, Any], current_field: Optional[FormField]) -> Dict[str, Any]:
-        """Build comprehensive context for LLM"""
+        """Build comprehensive context for LLM with enhanced date context tracking"""
         
         form_context_key = self._get_form_context_key()
         
@@ -576,8 +622,11 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
                 "attempts": field_state.attempt_count if field_state else 0
             }
         
-        # Get conversation history
-        conversation_history = self.session.get_conversation_context(5)
+        # Get conversation history with more context for date fields
+        conversation_history = self.session.get_conversation_context(10)  # More history for context
+        
+        # Enhanced date context extraction
+        date_context = self._extract_date_context_from_history(conversation_history)
         
         return {
             "form_info": {
@@ -589,9 +638,49 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
             "user_input": user_input,
             "user_intent": intent,
             "conversation_history": conversation_history,
+            "date_context": date_context,  # Enhanced date context
             "form_context": self.session.context.get(form_context_key, {}),
             "completion_status": self.get_completion_status()
         }
+    
+    def _extract_date_context_from_history(self, conversation_history: List[Dict[str, str]]) -> Dict[str, Any]:
+        """Extract date-related context from conversation history"""
+        import calendar
+        
+        month_names = {month.lower(): idx for idx, month in enumerate(calendar.month_name[1:], 1)}
+        month_abbrev = {month.lower(): idx for idx, month in enumerate(calendar.month_abbr[1:], 1)}
+        all_months = {**month_names, **month_abbrev}
+        
+        date_context = {
+            "mentioned_month": None,
+            "mentioned_year": None,
+            "partial_date_info": None
+        }
+        
+        # Look through recent conversation for date mentions
+        for msg in reversed(conversation_history):  # Most recent first
+            content = msg.get('content', '').lower()
+            
+            # Look for month mentions
+            for month_name, month_num in all_months.items():
+                if month_name in content:
+                    date_context["mentioned_month"] = {
+                        "name": month_name,
+                        "number": month_num
+                    }
+                    break
+            
+            # Look for year mentions
+            year_match = re.search(r'\b(19|20)\d{2}\b', content)
+            if year_match:
+                date_context["mentioned_year"] = int(year_match.group())
+            
+            # If we found both month and year, we can note partial info
+            if date_context["mentioned_month"] and date_context["mentioned_year"]:
+                date_context["partial_date_info"] = f"{date_context['mentioned_month']['name']} {date_context['mentioned_year']}"
+                break
+        
+        return date_context
     
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
         """Parse LLM JSON response with fallback handling"""
@@ -698,6 +787,8 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
             return self.validator.validate_phone(value)
         elif field.type == FieldType.DATE:
             return self.validator.validate_date(value)
+        elif field.type == FieldType.PASSWORD:
+            return self.validator.validate_password(value)
         elif field.type in [FieldType.MULTIPLE_CHOICE, FieldType.DROPDOWN]:
             # Strict option matching
             if field.options and value not in field.options:
@@ -769,6 +860,17 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
         
         elif field.type == FieldType.PHONE:
             return f"{greeting}What's your phone number? Just say it naturally"
+        
+        elif field.type == FieldType.PASSWORD:
+            required_text = "" if field.validation.required else "This field is optional, but "
+            return f"{greeting}{required_text}Please provide your password. Note: You should type this manually for security rather than speaking it aloud"
+        
+        # Handle non-required fields with appropriate messaging
+        if not field.validation.required:
+            if field.description:
+                return f"{greeting}This field is optional: {base_question} {field.description}"
+            else:
+                return f"{greeting}This field is optional, but {base_question.lower()}"
         
         # Add description if available
         if field.description:

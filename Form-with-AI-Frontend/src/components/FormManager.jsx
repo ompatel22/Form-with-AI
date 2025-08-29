@@ -106,102 +106,150 @@ export default function FormManager({ onFormSelected, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="p-6 border-b border-gray-200 bg-gradient-to-r from-blue-600 to-purple-600 text-white">
-          <div className="flex items-center justify-between">
-            <h2 className="text-2xl font-bold">Form Manager</h2>
-            <button
-              onClick={onClose}
-              className="text-white hover:text-gray-200 text-2xl"
-            >
-              ×
-            </button>
+        <div className="text-center mb-8">
+          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4 tracking-tight">
+            AI-Powered Form Builder
+          </h1>
+          <p className="text-xl text-gray-300 mb-8">
+            Create intelligent forms with conversational AI assistance
+          </p>
+          
+          <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 rounded-xl p-6 backdrop-blur-sm">
+            <div className="flex items-center justify-center gap-8 text-sm text-gray-300">
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <span>Voice Recognition</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                <span>AI Conversation</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
+                <span>Smart Validation</span>
+              </div>
+            </div>
           </div>
-          <p className="mt-2 opacity-90">Create new forms or select existing ones for conversational filling</p>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-gray-200">
-          <button
-            onClick={() => setActiveTab('forms')}
-            className={`px-6 py-3 font-medium transition-colors ${
-              activeTab === 'forms'
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            My Forms ({forms.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('templates')}
-            className={`px-6 py-3 font-medium transition-colors ${
-              activeTab === 'templates'
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Templates ({templates.length})
-          </button>
+        {/* Modern Tab Navigation */}
+        <div className="bg-gray-800 rounded-xl border border-gray-700 mb-8">
+          <div className="flex p-2">
+            <button
+              onClick={() => setActiveTab('forms')}
+              className={`flex-1 px-6 py-3 font-medium rounded-lg transition-all duration-300 ${
+                activeTab === 'forms'
+                  ? 'bg-blue-600 text-white shadow-lg'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <span>📋</span>
+                <span>My Forms ({forms.length})</span>
+              </div>
+            </button>
+            <button
+              onClick={() => setActiveTab('templates')}
+              className={`flex-1 px-6 py-3 font-medium rounded-lg transition-all duration-300 ${
+                activeTab === 'templates'
+                  ? 'bg-purple-600 text-white shadow-lg'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <span>🎯</span>
+                <span>Templates ({templates.length})</span>
+              </div>
+            </button>
+          </div>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6" style={{ maxHeight: '60vh' }}>
+        <div className="min-h-[60vh]">
           {activeTab === 'forms' && (
             <div>
-              {/* Create Form Button */}
-              <div className="mb-6">
+              {/* Enhanced Create Form Button */}
+              <div className="mb-8">
                 <button
                   onClick={() => setShowFormBuilder(true)}
-                  className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors shadow-md hover:shadow-lg"
+                  className="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-8 py-4 rounded-xl hover:from-blue-500 hover:to-blue-600 transition-all duration-300 shadow-lg hover:shadow-xl font-semibold text-lg flex items-center gap-3"
                 >
-                  + Create New Form
+                  <span className="text-xl">+</span>
+                  Create New AI-Powered Form
                 </button>
               </div>
 
-              {/* Forms List */}
+              {/* Enhanced Forms List */}
               {loading ? (
-                <div className="text-center py-8">
-                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                  <p className="mt-2 text-gray-600">Loading forms...</p>
+                <div className="text-center py-16">
+                  <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                  <p className="mt-4 text-gray-300 text-lg">Loading your AI forms...</p>
                 </div>
               ) : forms.length === 0 ? (
-                <div className="text-center py-12">
-                  <div className="text-6xl mb-4">📋</div>
-                  <h3 className="text-xl font-semibold text-gray-700 mb-2">No Forms Yet</h3>
-                  <p className="text-gray-500 mb-4">Create your first form to get started</p>
+                <div className="text-center py-16 bg-gray-800 rounded-xl border border-gray-700">
+                  <div className="text-8xl mb-6">🚀</div>
+                  <h3 className="text-2xl font-semibold text-white mb-3">Ready to Build Your First AI Form?</h3>
+                  <p className="text-gray-400 mb-6 text-lg">Create intelligent forms with conversational AI that understands natural language</p>
                   <button
                     onClick={() => setShowFormBuilder(true)}
-                    className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                    className="bg-gradient-to-r from-green-600 to-green-700 text-white px-8 py-3 rounded-xl hover:from-green-500 hover:to-green-600 transition-all duration-300 shadow-lg hover:shadow-xl font-semibold"
                   >
-                    Create Form
+                    🎯 Create Your First Form
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                   {forms.map((form) => (
-                    <div key={form.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow">
-                      <h3 className="text-lg font-semibold text-gray-800 mb-2">{form.title}</h3>
-                      {form.description && (
-                        <p className="text-gray-600 text-sm mb-4 line-clamp-2">{form.description}</p>
-                      )}
-                      <div className="text-sm text-gray-500 mb-4">
-                        <p>{form.field_count} fields</p>
-                        <p>Created {new Date(form.created_at * 1000).toLocaleDateString()}</p>
+                    <div key={form.id} className="bg-gray-800 border border-gray-700 rounded-xl p-6 hover:border-blue-500/50 hover:shadow-xl hover:shadow-blue-500/10 transition-all duration-300 group">
+                      <div className="flex items-start justify-between mb-4">
+                        <h3 className="text-xl font-semibold text-white group-hover:text-blue-300 transition-colors">{form.title}</h3>
+                        <span className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded-full">
+                          {form.field_count} fields
+                        </span>
                       </div>
-                      <div className="flex gap-2">
+                      
+                      {form.description && (
+                        <p className="text-gray-400 text-sm mb-4 line-clamp-3">{form.description}</p>
+                      )}
+                      
+                      <div className="flex items-center gap-4 text-xs text-gray-500 mb-6">
+                        <span className="flex items-center gap-1">
+                          <span>📅</span>
+                          {new Date(form.created_at * 1000).toLocaleDateString()}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className={form.is_active ? "🟢" : "🔴"}></span>
+                          {form.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </div>
+                      
+                      <div className="flex gap-3">
                         <button
                           onClick={() => handleFormSelect(form.id)}
-                          className="flex-1 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors"
+                          className="flex-1 bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-500 transition-all duration-300 font-medium shadow-md hover:shadow-lg"
                         >
-                          Use Form
+                          🤖 Use with AI
+                        </button>
+                        <button
+                          onClick={() => {
+                            const shareUrl = `${window.location.origin}/forms/${form.id}/fill`;
+                            navigator.clipboard.writeText(shareUrl);
+                            alert('Shareable link copied to clipboard!');
+                          }}
+                          className="px-4 py-3 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
+                          title="Copy shareable link"
+                        >
+                          🔗
                         </button>
                         <button
                           onClick={() => deleteForm(form.id)}
-                          className="px-4 py-2 border border-red-300 text-red-600 rounded hover:bg-red-50 transition-colors"
+                          className="px-4 py-3 bg-red-600/20 text-red-400 border border-red-600/30 rounded-lg hover:bg-red-600/30 transition-colors"
+                          title="Delete form"
                         >
-                          Delete
+                          🗑️
                         </button>
                       </div>
                     </div>
@@ -213,32 +261,40 @@ export default function FormManager({ onFormSelected, onClose }) {
 
           {activeTab === 'templates' && (
             <div>
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-2">Form Templates</h3>
-                <p className="text-gray-600">Start with a pre-built template and customize as needed</p>
+              <div className="mb-8 text-center">
+                <h3 className="text-2xl font-semibold text-white mb-3">Professional Form Templates</h3>
+                <p className="text-gray-400 text-lg">Start with AI-powered templates and customize to your needs</p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {templates.map((template) => (
-                  <div key={template.id} className="border border-gray-200 rounded-lg p-6 hover:shadow-lg transition-shadow">
-                    <h3 className="text-lg font-semibold text-gray-800 mb-2">{template.title}</h3>
-                    <p className="text-gray-600 text-sm mb-4">{template.description}</p>
-                    <div className="text-sm text-gray-500 mb-4">
-                      <p>{template.field_count} fields included</p>
+                  <div key={template.id} className="bg-gray-800 border border-gray-700 rounded-xl p-8 hover:border-purple-500/50 hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-300 group">
+                    <div className="text-center mb-6">
+                      <div className="text-4xl mb-3">
+                        {template.id === 'student_registration' ? '🎓' : 
+                         template.id === 'feedback_survey' ? '📊' : '📋'}
+                      </div>
+                      <h3 className="text-xl font-semibold text-white group-hover:text-purple-300 transition-colors mb-2">
+                        {template.title}
+                      </h3>
+                      <p className="text-gray-400 mb-4">{template.description}</p>
+                      <div className="inline-flex items-center gap-2 bg-gray-700 px-3 py-1 rounded-full text-sm text-gray-300">
+                        <span>📝</span>
+                        <span>{template.field_count} AI-powered fields</span>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          const customTitle = prompt('Enter a title for your new form (or leave blank to use template title):');
-                          if (customTitle !== null) {
-                            createFromTemplate(template.id, customTitle.trim());
-                          }
-                        }}
-                        className="flex-1 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors"
-                      >
-                        Use Template
-                      </button>
-                    </div>
+                    
+                    <button
+                      onClick={() => {
+                        const customTitle = prompt('Enter a title for your new form (or leave blank to use template title):');
+                        if (customTitle !== null) {
+                          createFromTemplate(template.id, customTitle.trim());
+                        }
+                      }}
+                      className="w-full bg-gradient-to-r from-purple-600 to-purple-700 text-white px-6 py-3 rounded-lg hover:from-purple-500 hover:to-purple-600 transition-all duration-300 font-medium shadow-md hover:shadow-lg"
+                    >
+                      🚀 Create from Template
+                    </button>
                   </div>
                 ))}
               </div>
@@ -246,21 +302,16 @@ export default function FormManager({ onFormSelected, onClose }) {
           )}
         </div>
 
-        {/* Footer */}
-        <div className="p-6 border-t border-gray-200 bg-gray-50">
-          <div className="flex justify-between items-center">
-            <div className="text-sm text-gray-600">
-              {activeTab === 'forms' 
-                ? `${forms.length} forms available`
-                : `${templates.length} templates available`
-              }
-            </div>
-            <button
-              onClick={onClose}
-              className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors"
-            >
-              Close
-            </button>
+        {/* Enhanced Footer */}
+        <div className="mt-12 pt-8 border-t border-gray-700 text-center">
+          <div className="text-sm text-gray-400 mb-4">
+            {activeTab === 'forms' 
+              ? `${forms.length} intelligent forms ready for AI assistance`
+              : `${templates.length} professional templates available`
+            }
+          </div>
+          <div className="text-xs text-gray-500">
+            Powered by AI • Voice Recognition • Natural Language Processing
           </div>
         </div>
       </div>

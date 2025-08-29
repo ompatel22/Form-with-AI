@@ -26,6 +26,7 @@ class FieldType(str, Enum):
     PHONE = "phone"
     URL = "url"
     NUMBER = "number"
+    PASSWORD = "password"
 
 class ValidationRule(BaseModel):
     """Validation rules for form fields"""
