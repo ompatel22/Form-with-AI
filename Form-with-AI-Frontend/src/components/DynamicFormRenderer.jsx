@@ -85,6 +85,32 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
         );
 
       case 'date':
+      // Convert MM/DD/YYYY to YYYY-MM-DD for date input
+      const displayValue = value
+        ? (() => {
+            const [month, day, year] = value.split('/');
+            return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+          })()
+        : '';
+      return (
+        <input
+          type="date"
+          name={field.name}
+          value={displayValue}
+          onChange={(e) => {
+            // Convert YYYY-MM-DD back to MM/DD/YYYY for formData
+            const dateValue = e.target.value;
+            if (dateValue) {
+              const [year, month, day] = dateValue.split('-');
+              handleFieldChange(field.name, `${month}/${day}/${year}`);
+            } else {
+              handleFieldChange(field.name, '');
+            }
+          }}
+          required={field.validation?.required}
+          className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+        />
+      );
         return (
           <input
             type="date"

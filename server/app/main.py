@@ -5,7 +5,6 @@ import tempfile
 import os
 import asyncio
 import traceback
-import zipfile
 from typing import Dict, Any, Optional, List
 from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
@@ -180,7 +179,6 @@ class SessionInfoResponse(BaseModel):
     message_count: int
     context: Dict[str, Any]
 
-# Form Builder Models
 class CreateFormRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
@@ -332,6 +330,8 @@ def reset_session(session_id: str = Query("session1", min_length=1)):
             MessageRole.SYSTEM, 
             "Session reset - ready for dynamic form interaction"
         )
+        # Clear form-specific context
+        session.context = {k: v for k, v in session.context.items() if not k.startswith("form_")}
         
         logger.info(f"Session {session_id} reset successfully")
         
@@ -382,6 +382,14 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Get or create session
         session = memory_store.get_or_create_session(session_id)
         
+        # Log session and form details for debugging
+        logger.info(f"Dynamic chat request: session={session_id}, form={form_id}, message='{req.message}'")
+        form = form_store.get_form(form_id)
+        if not form:
+            logger.error(f"Form {form_id} not found")
+            raise HTTPException(status_code=404, detail="Form not found")
+        logger.info(f"Form fields: {[f.name for f in form.fields]}")
+        
         # Create form-specific conversation handler
         conversation = EnhancedDynamicFormConversation(form_id, session)
         
@@ -408,7 +416,7 @@ async def dynamic_chat(req: DynamicChatRequest):
         
         # Generate audio for response
         audio_b64 = ""
-        reply_text = llm_response.get("reply", "")
+        reply_text = llm_response.get("reply", llm_response.get("ask", ""))
         if reply_text:
             try:
                 audio_b64 = tts_to_base64_wav(reply_text)
@@ -422,6 +430,9 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Get form summary and completion status
         form_summary = conversation.get_form_summary()
         completion_status = conversation.get_completion_status()
+        
+        # Log response details
+        logger.info(f"Dynamic chat response: action={llm_response.get('action')}, ask='{llm_response.get('ask')}', field_focus={llm_response.get('field_focus')}")
         
         # Build enhanced response
         response = DynamicChatResponse(
@@ -473,10 +484,7 @@ async def text_to_speech(req: TTSRequest):
             detail="Text-to-speech conversion failed"
         )
 
-# ========================================
-# FORM BUILDER ENDPOINTS
-# ========================================
-
+# Form Builder Endpoints
 @app.get("/forms")
 def list_forms():
     """List all available forms"""
@@ -792,7 +800,6 @@ def cleanup_expired_sessions():
             detail="Session cleanup failed"
         )
 
-# Export session data
 @app.get("/admin/sessions/{session_id}/export")
 def export_session(session_id: str):
     """Export complete session data"""

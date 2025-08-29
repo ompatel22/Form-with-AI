@@ -235,6 +235,196 @@ class AdvancedValidator:
     
     @staticmethod
     def validate_date(value: str) -> ValidationResult:
+        """Validate and parse date inputs in various formats"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Validating date input: '{value}'")
+
+        if not value or not value.strip():
+            return ValidationResult(False, "", "Date cannot be empty", "Please provide the date, e.g., 'January 1, 2000' or '01/01/2000'")
+
+        cleaned = value.strip().lower()
+
+        import calendar
+        import datetime as dt
+
+        # Month mappings
+        month_names = {month.lower(): idx for idx, month in enumerate(calendar.month_name[1:], 1)}
+        month_abbrev = {month.lower(): idx for idx, month in enumerate(calendar.month_abbr[1:], 1)}
+        all_months = {**month_names, **month_abbrev}
+
+        # Comprehensive date patterns
+        date_patterns = [
+            (r'(\d{1,2})(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*,?\s*(\d{2,4})', 'day_month_year'),
+            (r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(st|nd|rd|th)?\s*,?\s*(\d{2,4})', 'month_day_year'),
+            (r'(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})', 'numeric_slash'),
+            (r'(\d{4})-(\d{1,2})-(\d{1,2})', 'iso'),
+            (r'(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*,?\s*(\d{2,4})', 'short_day_month_year'),
+            (r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})\s*,?\s*(\d{2,4})', 'short_month_day_year'),
+        ]
+
+        for pattern, pattern_type in date_patterns:
+            match = re.search(pattern, cleaned, re.IGNORECASE)
+            if match:
+                try:
+                    groups = match.groups()
+                    day, month, year = None, None, None
+
+                    if pattern_type == 'day_month_year':
+                        day = int(groups[0])
+                        month = all_months[groups[2].lower()]
+                        year = int(groups[3])
+                    elif pattern_type == 'month_day_year':
+                        month = all_months[groups[0].lower()]
+                        day = int(groups[1])
+                        year = int(groups[3])
+                    elif pattern_type == 'numeric_slash':
+                        month, day, year = int(groups[0]), int(groups[1]), int(groups[2])
+                    elif pattern_type == 'iso':
+                        year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+                    elif pattern_type == 'short_day_month_year':
+                        day = int(groups[0])
+                        month = all_months[groups[1].lower()]
+                        year = int(groups[2])
+                    elif pattern_type == 'short_month_day_year':
+                        month = all_months[groups[0].lower()]
+                        day = int(groups[1])
+                        year = int(groups[2])
+
+                    # Handle two-digit years
+                    if year < 100:
+                        current_year = dt.datetime.now().year % 100
+                        century = 2000 if year <= current_year + 10 else 1900
+                        year += century
+
+                    # Validate date
+                    if month and day and year:
+                        if not (1 <= month <= 12):
+                            continue
+                        if not (1 <= day <= 31):
+                            continue
+                        if not (1900 <= year <= dt.datetime.now().year + 10):
+                            continue
+
+                        try:
+                            dt.date(year, month, day)
+                            formatted_date = f"{month:02d}/{day:02d}/{year}"
+                            logger.info(f"Validated date: '{value}' -> '{formatted_date}'")
+                            return ValidationResult(True, formatted_date, "", "")
+                        except ValueError:
+                            logger.warning(f"Invalid date components: {year}-{month}-{day}")
+                            return ValidationResult(
+                                False,
+                                "",
+                                "Invalid date (e.g., February 30 is not valid)",
+                                "Please provide a valid date like 'January 1, 2000' or '01/01/2000'"
+                            )
+
+                except (ValueError, IndexError, KeyError) as e:
+                    logger.warning(f"Error parsing date '{value}': {e}")
+                    continue
+
+        logger.warning(f"Failed to parse date: '{value}'")
+        return ValidationResult(
+            False,
+            "",
+            "Invalid date format",
+            "Please use a format like 'January 1, 2000', '01/01/2000', 'Jan 1 2000', or '2000-01-01'"
+        )
+        """Validate and parse date inputs in various formats"""
+        if not value or not value.strip():
+            return ValidationResult(False, "", "Date cannot be empty", "Please provide the date, e.g., 'January 1, 2000' or '01/01/2000'")
+
+        cleaned = value.strip().lower()
+
+        import calendar
+        import datetime as dt
+
+        # Month mappings
+        month_names = {month.lower(): idx for idx, month in enumerate(calendar.month_name[1:], 1)}
+        month_abbrev = {month.lower(): idx for idx, month in enumerate(calendar.month_abbr[1:], 1)}
+        all_months = {**month_names, **month_abbrev}
+
+        # Comprehensive date patterns
+        date_patterns = [
+            # Natural language: "January 1st 2004", "1 January 2004", "Jan 1, 2004"
+            (r'(\d{1,2})(st|nd|rd|th)?\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*,?\s*(\d{2,4})', 'day_month_year'),
+            (r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(st|nd|rd|th)?\s*,?\s*(\d{2,4})', 'month_day_year'),
+            # Numeric formats: "01/01/2004", "01-01-2004", "1/1/04"
+            (r'(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})', 'numeric_slash'),
+            # ISO format: "2004-01-01"
+            (r'(\d{4})-(\d{1,2})-(\d{1,2})', 'iso'),
+            # Short formats: "1 Jan 2004", "Jan 1 2004"
+            (r'(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s*,?\s*(\d{2,4})', 'short_day_month_year'),
+            (r'(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})\s*,?\s*(\d{2,4})', 'short_month_day_year'),
+        ]
+
+        for pattern, pattern_type in date_patterns:
+            match = re.search(pattern, cleaned, re.IGNORECASE)
+            if match:
+                try:
+                    groups = match.groups()
+                    day, month, year = None, None, None
+
+                    if pattern_type == 'day_month_year':
+                        day = int(groups[0])
+                        month = all_months[groups[2].lower()]
+                        year = int(groups[3])
+                    elif pattern_type == 'month_day_year':
+                        month = all_months[groups[0].lower()]
+                        day = int(groups[1])
+                        year = int(groups[3])
+                    elif pattern_type == 'numeric_slash':
+                        month, day, year = int(groups[0]), int(groups[1]), int(groups[2])
+                    elif pattern_type == 'iso':
+                        year, month, day = int(groups[0]), int(groups[1]), int(groups[2])
+                    elif pattern_type == 'short_day_month_year':
+                        day = int(groups[0])
+                        month = all_months[groups[1].lower()]
+                        year = int(groups[2])
+                    elif pattern_type == 'short_month_day_year':
+                        month = all_months[groups[0].lower()]
+                        day = int(groups[1])
+                        year = int(groups[2])
+
+                    # Handle two-digit years
+                    if year < 100:
+                        current_year = dt.datetime.now().year % 100
+                        century = 2000 if year <= current_year + 10 else 1900
+                        year += century
+
+                    # Validate date
+                    if month and day and year:
+                        if not (1 <= month <= 12):
+                            continue
+                        if not (1 <= day <= 31):
+                            continue
+                        if not (1900 <= year <= dt.datetime.now().year + 10):
+                            continue
+
+                        # Validate actual date
+                        try:
+                            dt.date(year, month, day)
+                            formatted_date = f"{month:02d}/{day:02d}/{year}"
+                            return ValidationResult(True, formatted_date, "", "")
+                        except ValueError:
+                            return ValidationResult(
+                                False,
+                                "",
+                                "Invalid date (e.g., February 30 is not valid)",
+                                "Please provide a valid date like 'January 1, 2000' or '01/01/2000'"
+                            )
+
+                except (ValueError, IndexError, KeyError):
+                    continue
+
+        # Fallback for partial dates or invalid formats
+        return ValidationResult(
+            False,
+            "",
+            "Invalid date format",
+            "Please use a format like 'January 1, 2000', '01/01/2000', 'Jan 1 2000', or '2000-01-01'"
+        )
         if not value or not value.strip():
             return ValidationResult(False, "", "Date cannot be empty", "Please provide the date")
         
@@ -540,24 +730,27 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
     
     def process_user_input(self, user_text: str) -> Dict[str, Any]:
         """Enhanced user input processing with LLM integration"""
-        
         form_context_key = self._get_form_context_key()
         
-        # Handle first conversation start
+        # Log session state for debugging
+        logger.info(f"Processing input for session {self.session.session_id}, form {self.form_id}, conversation_started: {self.session.context.get(form_context_key, {}).get('conversation_started')}, input: '{user_text}'")
+        
+        # Always check for conversation start
         if not self.session.context[form_context_key].get("conversation_started"):
             self.session.context[form_context_key]["conversation_started"] = True
-            
-            if not user_text.strip():
-                # Start conversation by asking for first field
-                first_field = self.get_next_field()
-                if first_field:
-                    return {
-                        "action": "ask",
-                        "updates": {},
-                        "ask": self._generate_field_question_text(first_field),
-                        "field_focus": first_field.name,
-                        "tone": "friendly"
-                    }
+            first_field = self.get_next_field()
+            logger.info(f"Next field: {first_field.name if first_field else None}")
+            if first_field:
+                response = {
+                    "action": "ask",
+                    "updates": {},
+                    "ask": self._generate_field_question_text(first_field),
+                    "field_focus": first_field.name,
+                    "tone": "friendly",
+                    "reply": self._generate_field_question_text(first_field)  # Ensure reply is set
+                }
+                logger.info(f"Starting conversation, asking: {response['ask']}")
+                return response
         
         # Clean and normalize input
         cleaned_input = clean_speech_input(user_text)
@@ -565,7 +758,26 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
         # Classify user intent
         current_field = self.get_next_field()
         intent = self.intent_classifier.classify_intent(cleaned_input, current_field.name if current_field else None)
-        
+        if intent["type"] == "skip" and current_field and not current_field.validation.required:
+            field_key = self._get_field_key(current_field.name)
+            self.session.update_field(field_key, None, FieldStatus.COLLECTED)
+            next_field = self.get_next_field()
+            if next_field:
+                return {
+                    "action": "ask",
+                    "updates": {},
+                    "ask": self._generate_field_question_text(next_field),
+                    "field_focus": next_field.name,
+                    "tone": "friendly"
+                }
+            else:
+                return {
+                    "action": "done",
+                    "updates": {},
+                    "ask": f"Perfect! I've collected all the information. {self.form_schema.confirmation_message}",
+                    "field_focus": None,
+                    "tone": "success"
+                }
         # Build context for LLM
         context = self._build_llm_context(cleaned_input, intent, current_field)
         
@@ -597,7 +809,8 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
                 "updates": {},
                 "ask": "I'm having a technical issue. Could you please repeat that?",
                 "field_focus": current_field.name if current_field else None,
-                "tone": "apologetic"
+                "tone": "apologetic",
+                "reply": "I'm having a technical issue. Could you please repeat that?"
             }
     
     def _build_llm_context(self, user_input: str, intent: Dict[str, Any], current_field: Optional[FormField]) -> Dict[str, Any]:
@@ -711,10 +924,79 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
             "updates": {},
             "ask": "I had trouble understanding. Could you please rephrase that?",
             "field_focus": None,
-            "tone": "apologetic"
+            "tone": "apologetic",
+            "reply": "I had trouble understanding. Could you please rephrase that?"
         }
     
     def _process_field_updates(self, llm_response: Dict[str, Any], current_field: Optional[FormField]) -> Dict[str, Any]:
+        """Process and validate field updates from LLM response"""
+        updates = llm_response.get("updates", {})
+        validated_updates = {}
+        validation_errors = {}
+        
+        logger.info(f"Processing updates: {updates}")
+        
+        # Validate each field update
+        for field_name, value in updates.items():
+            if value is not None and str(value).strip():
+                # Find the field schema
+                field_schema = next((f for f in self.form_schema.fields if f.name == field_name), None)
+                
+                if field_schema:
+                    validation_result = self._validate_field_value(field_schema, str(value))
+                    logger.info(f"Validation for {field_name}: is_valid={validation_result.is_valid}, "
+                            f"cleaned_value={validation_result.cleaned_value}, "
+                            f"error={validation_result.error_message}")
+                    
+                    if validation_result.is_valid:
+                        validated_updates[field_name] = validation_result.cleaned_value
+                        # Update session
+                        field_key = self._get_field_key(field_name)
+                        self.session.update_field(field_key, validation_result.cleaned_value, FieldStatus.COLLECTED)
+                    else:
+                        validation_errors[field_name] = {
+                            "error": validation_result.error_message,
+                            "suggestion": validation_result.suggestion
+                        }
+        
+        # Handle validation errors
+        if validation_errors:
+            field_name = list(validation_errors.keys())[0]
+            error_info = validation_errors[field_name]
+            error_response = {
+                "action": "ask",
+                "updates": {},
+                "ask": f"{error_info['error']}. {error_info['suggestion']}",
+                "field_focus": field_name,
+                "tone": "helpful",
+                "reply": f"{error_info['error']}. {error_info['suggestion']}"
+            }
+            logger.info(f"Validation error response: {error_response}")
+            return error_response
+        
+        # Update response with validated data
+        llm_response["updates"] = validated_updates
+        
+        # Check if form is complete
+        next_field = self.get_next_field()
+        logger.info(f"Next field after updates: {next_field.name if next_field else None}")
+        if next_field is None:
+            llm_response.update({
+                "action": "done",
+                "ask": f"Perfect! I've collected all the information. {self.form_schema.confirmation_message}",
+                "field_focus": None,
+                "tone": "success",
+                "reply": f"Perfect! I've collected all the information. {self.form_schema.confirmation_message}"
+            })
+        elif llm_response.get("action") == "set" and validated_updates:
+            # Move to next field
+            llm_response["field_focus"] = next_field.name
+            if not llm_response.get("ask"):
+                llm_response["ask"] = self._generate_field_question_text(next_field)
+                llm_response["reply"] = llm_response["ask"]
+        
+        logger.info(f"Final processed response: {llm_response}")
+        return llm_response
         """Process and validate field updates from LLM response"""
         
         updates = llm_response.get("updates", {})
@@ -751,7 +1033,8 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
                 "updates": {},
                 "ask": f"{error_info['error']}. {error_info['suggestion']}",
                 "field_focus": field_name,
-                "tone": "helpful"
+                "tone": "helpful",
+                "reply": f"{error_info['error']}. {error_info['suggestion']}"
             }
         
         # Update response with validated data
@@ -759,12 +1042,13 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
         
         # Check if form is complete
         completion_status = self.get_completion_status()
-        if completion_status["is_complete"]:
+        if self.get_next_field() is None:
             llm_response.update({
                 "action": "done",
                 "ask": f"Perfect! I've collected all the required information. {self.form_schema.confirmation_message}",
                 "field_focus": None,
-                "tone": "success"
+                "tone": "success",
+                "reply": f"Perfect! I've collected all the required information. {self.form_schema.confirmation_message}"
             })
         elif llm_response.get("action") == "set" and validated_updates:
             # Move to next field
@@ -773,6 +1057,7 @@ Remember: Be conversational, helpful, and make the form-filling experience pleas
                 llm_response["field_focus"] = next_field.name
                 if not llm_response.get("ask"):
                     llm_response["ask"] = self._generate_field_question_text(next_field)
+                    llm_response["reply"] = llm_response["ask"]
         
         return llm_response
     

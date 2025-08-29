@@ -139,77 +139,91 @@ function App() {
 
   // ENHANCED Dynamic backend chat with manual field detection
   const dynamicBackendChat = async (msg, includeFormData = true) => {
-    if (!currentForm) return;
+  if (!currentForm) return;
 
-    setStatus("waiting...");
-    try {
-      const requestBody = { 
-        session_id: sessionId, 
-        form_id: currentForm.id,
-        message: msg 
-      };
+  setStatus("waiting...");
+  try {
+    const requestBody = { 
+      session_id: sessionId, 
+      form_id: currentForm.id,
+      message: msg 
+    };
 
-      // MANUAL FORM FIELD DETECTION - Include current form data to detect manual entries
-      if (includeFormData && Object.keys(formData).length > 0) {
-        requestBody.manual_form_data = formData;
-      }
+    if (includeFormData && Object.keys(formData).length > 0) {
+      requestBody.manual_form_data = formData;
+    }
 
-      const res = await fetch(`${API}/dynamic-chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
+    const res = await fetch(`${API}/dynamic-chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      }
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
 
-      const data = await res.json();
-      console.log("Dynamic backend response:", data);
+    const data = await res.json();
+    console.log("Dynamic backend response:", data);
 
-      setStatus("idle");
+    setStatus("idle");
 
-      if (data.reply) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            text: data.reply,
-            who: "agent",
-            timestamp: new Date().toISOString(),
-            action: data.action,
-            tone: data.tone,
-          },
-        ]);
-      }
+    if (data.reply) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          text: data.reply,
+          who: "agent",
+          timestamp: new Date().toISOString(),
+          action: data.action,
+          tone: data.tone,
+        },
+      ]);
+    }
 
-      // Update form data based on form summary
+    // Update form data based on form_summary and updates
+    setFormData(prev => {
+      const newFormData = { ...prev };
+
+      // Update from form_summary.fields
       if (data.form_summary && data.form_summary.fields) {
-        const newFormData = {};
         Object.entries(data.form_summary.fields).forEach(([fieldName, fieldInfo]) => {
           if (fieldInfo.value && fieldInfo.status === 'collected') {
             newFormData[fieldName] = fieldInfo.value;
           }
         });
-        setFormData(prev => ({ ...prev, ...newFormData }));
       }
 
-      if (data.audio_b64 || data.reply) {
-        await playBase64WavOrFallback(data.audio_b64, data.reply);
+      // Update from updates field
+      if (data.updates) {
+        Object.entries(data.updates).forEach(([fieldName, value]) => {
+          if (value) {
+            newFormData[fieldName] = value;
+          }
+        });
       }
-    } catch (err) {
-      console.error("Dynamic chat error:", err);
-      setStatus("error");
-      setMessages((prev) => [
-        ...prev,
-        {
-          text: `Connection error: ${err.message}. Please check if the backend is running.`,
-          who: "agent",
-          timestamp: new Date().toISOString(),
-          isError: true,
-        },
-      ]);
+
+      console.log("Updated form data:", newFormData);
+      return newFormData;
+    });
+
+    if (data.audio_b64 || data.reply) {
+      await playBase64WavOrFallback(data.audio_b64, data.reply);
     }
-  };
+  } catch (err) {
+    console.error("Dynamic chat error:", err);
+    setStatus("error");
+    setMessages((prev) => [
+      ...prev,
+      {
+        text: `Connection error: ${err.message}. Please check if the backend is running.`,
+        who: "agent",
+        timestamp: new Date().toISOString(),
+        isError: true,
+      },
+    ]);
+  }
+};
 
   const handleSend = async () => {
     const message = inputText.trim();
