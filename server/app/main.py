@@ -1007,19 +1007,34 @@ def delete_form(form_id: str):
 # Dynamic Chat for Forms
 @app.post("/dynamic-chat", response_model=DynamicChatResponse)
 async def dynamic_chat(req: DynamicChatRequest):
-    """Enhanced chat endpoint for dynamic forms"""
+    """Enhanced chat endpoint for dynamic forms with full LLM integration"""
+    session_id = f"{req.session_id}_{req.form_id}"  # Form-specific session isolation
+    
     try:
-        # Get or create session
-        session = memory_store.get_or_create_session(req.session_id)
+        # Get or create form-specific session to prevent cross-contamination
+        session = memory_store.get_or_create_session(session_id)
+        
+        # Normalize user input with enhanced speech-to-text handling
+        raw_message = req.message.strip()
+        normalized_message = enhanced_normalize_speech(raw_message)
         
         # Add user message to session
-        session.add_message(MessageRole.USER, req.message)
+        session.add_message(MessageRole.USER, normalized_message)
         
-        # Create dynamic form conversation handler
-        form_conversation = DynamicFormConversation(req.form_id, session)
+        # Create enhanced dynamic form conversation handler
+        from .dynamic_chat import EnhancedDynamicFormConversation
+        form_conversation = EnhancedDynamicFormConversation(req.form_id, session)
         
-        # Process user input
-        llm_response = form_conversation.process_user_input(req.message)
+        # Process user input with full LLM integration
+        llm_response = form_conversation.process_user_input(normalized_message)
+        
+        # Extract user's name for personalization
+        if llm_response.get("updates") and "name" in str(llm_response.get("updates")).lower():
+            for field_name, value in llm_response.get("updates", {}).items():
+                if "name" in field_name.lower() and value:
+                    form_context_key = f"form_{req.form_id}"
+                    if form_context_key in session.context:
+                        session.context[form_context_key]["user_name"] = value.split()[0]  # First name
         
         # Generate audio response
         audio_b64 = ""
@@ -1033,8 +1048,9 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Add agent response to session
         session.add_message(MessageRole.AGENT, reply_text)
         
-        # Get form summary
+        # Get comprehensive form summary
         form_summary = form_conversation.get_form_summary()
+        completion_status = form_conversation.get_completion_status()
         
         response = DynamicChatResponse(
             action=llm_response.get("action", "ask"),
@@ -1043,22 +1059,31 @@ async def dynamic_chat(req: DynamicChatRequest):
             updates=llm_response.get("updates", {}),
             audio_b64=audio_b64,
             form_summary=form_summary,
-            completion_status=llm_response.get("completion_status"),
+            completion_status=completion_status,
             field_focus=llm_response.get("field_focus"),
             tone=llm_response.get("tone", "friendly")
         )
         
-        logger.info(f"Dynamic chat processed for session {req.session_id}, form {req.form_id}")
+        logger.info(f"Enhanced dynamic chat processed for session {session_id}, form {req.form_id}: action={llm_response.get('action')}")
         return response
         
     except Exception as e:
-        logger.error(f"Dynamic chat processing failed: {e}\n{traceback.format_exc()}")
+        logger.error(f"Dynamic chat processing failed for session {session_id}: {e}\n{traceback.format_exc()}")
+        
+        # Return graceful error response
+        error_reply = "I'm having a technical issue. Could you please try again?"
+        error_audio = ""
+        try:
+            error_audio = tts_to_base64_wav(error_reply)
+        except Exception:
+            pass
         
         return DynamicChatResponse(
             action="error",
-            reply="I'm having a technical issue. Could you please try again?",
-            audio_b64="",
-            form_summary=None
+            reply=error_reply,
+            audio_b64=error_audio,
+            form_summary=None,
+            completion_status={"is_complete": False, "progress_percentage": 0}
         )
 
 # Form Response Endpoints

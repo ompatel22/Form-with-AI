@@ -5,7 +5,6 @@ import FormManager from "./components/FormManager.jsx";
 import DynamicFormRenderer from "./components/DynamicFormRenderer.jsx";
 
 const API = "http://127.0.0.1:8000";
-const sessionId = "session1";
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -18,6 +17,11 @@ function App() {
   const [formData, setFormData] = useState({});
   const [showFormManager, setShowFormManager] = useState(false);
   const [isLegacyMode, setIsLegacyMode] = useState(true); // Start with legacy form
+  
+  // Session Management - Generate unique session IDs for each form/mode
+  const [sessionId, setSessionId] = useState(() => 
+    `legacy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+  );
   
   // Legacy form data
   const [legacyFormData, setLegacyFormData] = useState({
@@ -508,17 +512,26 @@ function App() {
 
   const handleFormSelected = (form) => {
     console.log("Form selected:", form);
+    
+    // Create unique session ID for this specific form
+    const newSessionId = `form_${form.id}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    setSessionId(newSessionId);
+    
     setCurrentForm(form);
     setFormData({});
     setMessages([]);
     setIsLegacyMode(false);
     setShowFormManager(false);
     
-    // Start conversation for the new form
-    dynamicBackendChat("");
+    // Start conversation for the new form with new session
+    setTimeout(() => dynamicBackendChat(""), 100); // Small delay to ensure sessionId is updated
   };
 
   const switchToLegacyMode = () => {
+    // Create unique session ID for legacy mode
+    const newSessionId = `legacy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    setSessionId(newSessionId);
+    
     setIsLegacyMode(true);
     setCurrentForm(null);
     setFormData({});
@@ -537,8 +550,8 @@ function App() {
       frustration_level: 0,
     });
 
-    // Start legacy conversation
-    legacyBackendChat("");
+    // Start legacy conversation with new session
+    setTimeout(() => legacyBackendChat(""), 100); // Small delay to ensure sessionId is updated
   };
 
   const handleReset = async () => {
@@ -547,6 +560,7 @@ function App() {
     }
 
     try {
+      // Reset using current session ID
       await fetch(`${API}/reset?session_id=${sessionId}`, { method: "POST" });
 
       setMessages([]);
@@ -566,7 +580,7 @@ function App() {
           frustration_level: 0,
         });
         await legacyBackendChat("");
-      } else {
+      } else if (currentForm) {
         setFormData({});
         await dynamicBackendChat("");
       }
