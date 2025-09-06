@@ -75,7 +75,7 @@ function App() {
         setTimeout(() => {
           console.log("🎙️ Auto-starting microphone after TTS completion");
           handleMic();
-        }, 800); // Increased delay to 800ms for better UX
+        }, 500); // Increased delay to 800ms for better UX
       });
 
       setTimeout(() => URL.revokeObjectURL(url), 2000);
@@ -94,7 +94,7 @@ function App() {
           setTimeout(() => {
             console.log("🎙️ Auto-starting microphone after speech synthesis");
             handleMic();
-          }, 800);
+          }, 500);
         };
         
         setIsPlaying(true);
@@ -242,79 +242,240 @@ function App() {
     await dynamicBackendChat(message);
   };
 
-  // ENHANCED MICROPHONE HANDLING - Better idle state management
-  const handleMic = () => {
-    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Rec) {
-      alert(
-        "Speech recognition not supported in this browser. Please type your message or try Chrome/Edge."
-      );
-      return;
-    }
+ // ENHANCED MICROPHONE HANDLING - Noise filtering and smart audio detection
+const handleMic = () => {
+  const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Rec) {
+    alert(
+      "Speech recognition not supported in this browser. Please type your message or try Chrome/Edge."
+    );
+    return;
+  }
 
-    const rec = new Rec();
-    rec.lang = "en-US";
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
+  const rec = new Rec();
+  rec.lang = "en-US";
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+  
+  // ENHANCED CONFIGURATION with noise handling
+  rec.continuous = true;
+  rec.maxRecognitionTime = 15000; // Reduced to 15 seconds max to prevent long sessions
+  
+  // Smart timeout and noise detection
+  let silenceTimer = null;
+  let noiseTimer = null;
+  let finalTranscript = '';
+  let interimTranscript = '';
+  let speechDetected = false;
+  let lastSpeechTime = Date.now();
+  
+  const SILENCE_TIMEOUT = 3000; // 1.2 seconds after speech ends (faster response)
+  const MAX_LISTENING_TIME = 30000; // 6 seconds total listening time (reduced)
+  const NOISE_TIMEOUT = 3000; // 2 seconds of no meaningful speech = noise (faster detection)
+  const MIN_SPEECH_LENGTH = 3; // Minimum characters to consider as real speech
+
+  setStatus("🎙️ listening - speak now");
+
+  // Auto-stop after max listening time to prevent infinite background noise
+  const maxTimer = setTimeout(() => {
+    console.log("Max listening time (6s) reached, stopping");
+    rec.stop();
+  }, MAX_LISTENING_TIME);
+
+  // Stop if only noise detected for too long
+  const startNoiseTimer = () => {
+    if (noiseTimer) clearTimeout(noiseTimer);
+    noiseTimer = setTimeout(() => {
+      if (!speechDetected) {
+        console.log("Only background noise detected, stopping");
+        setStatus("🔇 background noise detected");
+        rec.stop();
+      }
+    }, NOISE_TIMEOUT);
+  };
+
+  startNoiseTimer(); // Start noise detection immediately
+
+  rec.onresult = (e) => {
+    let interim = '';
+    let final = '';
     
-    // ENHANCED CONFIGURATION to reduce idle issues
-    rec.continuous = false;
-    rec.maxRecognitionTime = 10000; // 10 seconds max
+    for (let i = 0; i < e.results.length; i++) {
+      const transcript = e.results[i][0].transcript;
+      const confidence = e.results[i][0].confidence;
+      
+      // Filter out low-confidence results (likely noise)
+      if (confidence > 0.7 || e.results[i].isFinal) {
+        if (e.results[i].isFinal) {
+          final += transcript;
+        } else {
+          interim += transcript;
+        }
+      }
+    }
+    
+    finalTranscript = final;
+    interimTranscript = interim;
+    
+    const currentText = (final + interim).trim();
+    const hasRealSpeech = currentText.length >= MIN_SPEECH_LENGTH;
+    
+    // Clear timers if we detect real speech
+    if (hasRealSpeech) {
+      speechDetected = true;
+      lastSpeechTime = Date.now();
+      
+      // Clear noise timer since we have real speech
+      if (noiseTimer) {
+        clearTimeout(noiseTimer);
+        noiseTimer = null;
+      }
+      
+      // Clear existing silence timer
+      if (silenceTimer) {
+        clearTimeout(silenceTimer);
+      }
+      
+      setStatus("🎤 got it - keep talking");
+      console.log("Real speech detected:", currentText);
+      
+      // Reset silence timer for real speech
+      silenceTimer = setTimeout(() => {
+        console.log("1.2s silence after real speech, processing");
+        setStatus("processing speech");
+        rec.stop();
+      }, SILENCE_TIMEOUT);
+    } else if (currentText.length > 0) {
+      // Short or low-confidence speech - might be noise
+      console.log("Possible noise or unclear speech:", currentText);
+    }
+  };
 
-    setStatus("listening");
-
-    rec.onresult = (e) => {
-      const text = e.results[0][0].transcript;
-      console.log("Speech recognized:", text);
-
+  rec.onend = () => {
+    // Clear all timers
+    if (silenceTimer) clearTimeout(silenceTimer);
+    if (noiseTimer) clearTimeout(noiseTimer);
+    if (maxTimer) clearTimeout(maxTimer);
+    
+    setStatus("idle");
+    
+    const finalText = finalTranscript.trim();
+    
+    // Only process if we have meaningful speech
+    if (finalText && finalText.length >= MIN_SPEECH_LENGTH && speechDetected) {
+      console.log("Processing final speech:", finalText);
+      
       setMessages((prev) => [
         ...prev,
         {
-          text: text,
+          text: finalText,
           who: "user",
           timestamp: new Date().toISOString(),
           isVoice: true,
         },
       ]);
       
-      dynamicBackendChat(text);
-    };
-
-    rec.onerror = (e) => {
-      console.error("Speech recognition error:", e.error);
-      setStatus("error");
+      dynamicBackendChat(finalText);
+    } else if (!speechDetected) {
+      // Only background noise detected
+      console.log("Only background noise, no action taken");
       setMessages((prev) => [
         ...prev,
         {
-          text: `Speech recognition error: ${e.error}. Please try typing instead.`,
+          text: "Only background noise detected. Click the microphone when you're ready to speak.",
           who: "agent",
           timestamp: new Date().toISOString(),
-          isError: true,
+          isInfo: true,
         },
       ]);
-      setTimeout(() => setStatus("idle"), 2000);
-    };
-
-    rec.onend = () => {
-      setStatus("idle");
-    };
-
-    // Handle no speech timeout
-    rec.onnomatch = () => {
-      console.log("No speech detected");
-      setStatus("idle");
-    };
-
-    try {
-      rec.start();
-    } catch (err) {
-      console.error("Failed to start speech recognition:", err);
-      setStatus("error");
-      alert(
-        "Could not start voice recognition. Please check microphone permissions."
-      );
+    } else {
+      // Speech too short or unclear
+      console.log("Speech too short or unclear");
+      setMessages((prev) => [
+        ...prev,
+        {
+          text: "I didn't catch that clearly. Please speak a bit longer and more clearly.",
+          who: "agent",
+          timestamp: new Date().toISOString(),
+          isInfo: true,
+        },
+      ]);
     }
   };
+
+  rec.onerror = (e) => {
+    console.error("Speech recognition error:", e.error);
+    
+    // Clear all timers
+    if (silenceTimer) clearTimeout(silenceTimer);
+    if (noiseTimer) clearTimeout(noiseTimer);
+    if (maxTimer) clearTimeout(maxTimer);
+    
+    setStatus("error");
+    
+    // More specific error messages
+    let errorMessage = "Speech recognition error";
+    if (e.error === 'no-speech') {
+      errorMessage = "No speech detected. Try speaking louder or closer to the microphone.";
+    } else if (e.error === 'audio-capture') {
+      errorMessage = "Microphone access error. Please check your microphone permissions.";
+    } else if (e.error === 'not-allowed') {
+      errorMessage = "Microphone access denied. Please allow microphone access and try again.";
+    } else {
+      errorMessage = `Speech error: ${e.error}. Try using text input instead.`;
+    }
+    
+    setMessages((prev) => [
+      ...prev,
+      {
+        text: errorMessage,
+        who: "agent",
+        timestamp: new Date().toISOString(),
+        isError: true,
+      },
+    ]);
+    
+    setTimeout(() => setStatus("idle"), 2000);
+  };
+
+  rec.onnomatch = () => {
+    console.log("No speech pattern matched - likely noise");
+    setStatus("idle");
+  };
+
+  rec.onspeechstart = () => {
+    console.log("Speech pattern detected");
+    speechDetected = true;
+    setStatus("🎤 listening - I hear you");
+    
+    // Clear noise timer when real speech starts
+    if (noiseTimer) {
+      clearTimeout(noiseTimer);
+      noiseTimer = null;
+    }
+  };
+
+  rec.onspeechend = () => {
+    console.log("Speech pattern ended");
+    setStatus("⏳ processing in 1.2s...");
+  };
+
+  rec.onaudiostart = () => {
+    console.log("Audio input started");
+  };
+
+  rec.onaudioend = () => {
+    console.log("Audio input ended");
+  };
+
+  try {
+    rec.start();
+  } catch (err) {
+    console.error("Failed to start speech recognition:", err);
+    setStatus("error");
+    alert("Could not start voice recognition. Please check microphone permissions.");
+  }
+};
 
   const handleAudioEnable = async () => {
     if (pendingAudio) {

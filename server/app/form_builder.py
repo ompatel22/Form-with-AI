@@ -193,19 +193,12 @@ SAMPLE_FORMS = {
                 "order": 3
             },
             {
-                "name": "date_of_birth",
-                "type": "date",
-                "label": "Date of Birth",
-                "validation": {"required": True},
-                "order": 4
-            },
-            {
                 "name": "program",
                 "type": "dropdown",
                 "label": "Program of Interest",
                 "options": ["Computer Science", "Engineering", "Business", "Arts", "Other"],
                 "validation": {"required": True},
-                "order": 5
+                "order": 4
             },
             {
                 "name": "experience",
@@ -215,14 +208,7 @@ SAMPLE_FORMS = {
                 "scale_max": 10,
                 "scale_min_label": "Beginner",
                 "scale_max_label": "Expert",
-                "order": 6
-            },
-            {
-                "name": "interests",
-                "type": "checkboxes",
-                "label": "Areas of Interest (select all that apply)",
-                "options": ["Web Development", "Mobile Apps", "Data Science", "AI/ML", "Cybersecurity", "Game Development"],
-                "order": 7
+                "order":5
             },
             {
                 "name": "additional_info",
@@ -265,13 +251,6 @@ SAMPLE_FORMS = {
                 "options": ["Definitely", "Probably", "Not sure", "Probably not", "Definitely not"],
                 "validation": {"required": True},
                 "order": 3
-            },
-            {
-                "name": "improvements",
-                "type": "checkboxes",
-                "label": "What areas need improvement? (select all that apply)",
-                "options": ["Customer Service", "Product Quality", "Pricing", "Delivery Speed", "Website/App", "Communication"],
-                "order": 4
             },
             {
                 "name": "comments",
