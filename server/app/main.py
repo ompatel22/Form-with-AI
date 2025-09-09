@@ -20,7 +20,10 @@ import uuid
 from .llm import GeminiLLM
 from .memory import memory_store, FieldStatus, MessageRole
 from .form_builder import FormSchema, FormField, FieldType, FormResponse, form_store, SAMPLE_FORMS
-from .dynamic_chat import EnhancedDynamicFormConversation
+from .enhanced_dynamic_chat import EnhancedDynamicFormConversation
+from .language_support import Language, language_support
+from .silence_manager import silence_manager
+from .voice_interruption import voice_interruption_handler
 
 # Configure logging
 logging.basicConfig(
@@ -151,6 +154,8 @@ class DynamicChatRequest(BaseModel):
     form_id: str = Field(..., min_length=1)
     message: str = Field("", max_length=1000)
     manual_form_data: Optional[Dict[str, Any]] = None  # For detecting manual field entries
+    language: Optional[str] = "en"  # Language preference
+    interruption_detected: Optional[bool] = False  # Voice interruption flag
 
 class DynamicChatResponse(BaseModel):
     action: str
@@ -162,6 +167,9 @@ class DynamicChatResponse(BaseModel):
     completion_status: Optional[Dict[str, Any]] = None
     field_focus: Optional[str] = None
     tone: Optional[str] = None
+    language: Optional[str] = "en"  # Response language
+    greeting: Optional[str] = None  # Initial greeting if applicable
+    interruption_handled: Optional[bool] = False  # Whether interruption was processed
 
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500)
@@ -374,7 +382,7 @@ def get_session_info(session_id: str):
 # Main dynamic chat endpoint
 @app.post("/dynamic-chat", response_model=DynamicChatResponse)
 async def dynamic_chat(req: DynamicChatRequest):
-    """Enhanced dynamic chat endpoint with improved context handling"""
+    """Enhanced dynamic chat endpoint with multilingual and voice interruption support"""
     session_id = req.session_id
     form_id = req.form_id
     
@@ -383,15 +391,30 @@ async def dynamic_chat(req: DynamicChatRequest):
         session = memory_store.get_or_create_session(session_id)
         
         # Log session and form details for debugging
-        logger.info(f"Dynamic chat request: session={session_id}, form={form_id}, message='{req.message}'")
+        logger.info(f"Dynamic chat request: session={session_id}, form={form_id}, message='{req.message}', language={req.language}")
         form = form_store.get_form(form_id)
         if not form:
             logger.error(f"Form {form_id} not found")
             raise HTTPException(status_code=404, detail="Form not found")
-        logger.info(f"Form fields: {[f.name for f in form.fields]}")
         
-        # Create form-specific conversation handler
+        # Create enhanced form-specific conversation handler
         conversation = EnhancedDynamicFormConversation(form_id, session)
+        
+        # Set language preference
+        language = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
+        conversation.set_language(language)
+        
+        # Handle voice interruption if detected
+        if req.interruption_detected and req.message:
+            if voice_interruption_handler.should_stop_audio(req.message, language):
+                stop_msg = language_support.get_ui_text("skip_audio", language)
+                return DynamicChatResponse(
+                    action="interrupt_stop",
+                    reply=stop_msg,
+                    ask=stop_msg,
+                    language=language.value,
+                    interruption_handled=True
+                )
         
         # Normalize user input
         raw_message = req.message.strip()
@@ -414,12 +437,18 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Get conversation response
         llm_response = conversation.process_user_input(normalized_message)
         
-        # Generate audio for response
+        # Generate audio for response (in appropriate language)
         audio_b64 = ""
         reply_text = llm_response.get("reply", llm_response.get("ask", ""))
         if reply_text:
             try:
-                audio_b64 = tts_to_base64_wav(reply_text)
+                # Use appropriate TTS based on language
+                if language == Language.GUJARATI:
+                    # For Gujarati, we might need different TTS handling
+                    # For now, use the same TTS but could be enhanced later
+                    audio_b64 = tts_to_base64_wav(reply_text)
+                else:
+                    audio_b64 = tts_to_base64_wav(reply_text)
             except Exception as e:
                 logger.warning(f"TTS generation failed: {e}")
         
@@ -432,7 +461,7 @@ async def dynamic_chat(req: DynamicChatRequest):
         completion_status = conversation.get_completion_status()
         
         # Log response details
-        logger.info(f"Dynamic chat response: action={llm_response.get('action')}, ask='{llm_response.get('ask')}', field_focus={llm_response.get('field_focus')}")
+        logger.info(f"Dynamic chat response: action={llm_response.get('action')}, ask='{llm_response.get('ask')}', field_focus={llm_response.get('field_focus')}, language={language.value}")
         
         # Build enhanced response
         response = DynamicChatResponse(
@@ -444,17 +473,24 @@ async def dynamic_chat(req: DynamicChatRequest):
             form_summary=form_summary,
             completion_status=completion_status,
             field_focus=llm_response.get("field_focus"),
-            tone=llm_response.get("tone", "friendly")
+            tone=llm_response.get("tone", "friendly"),
+            language=language.value,
+            greeting=llm_response.get("greeting"),
+            interruption_handled=req.interruption_detected
         )
         
-        logger.info(f"Dynamic chat processed for session {session_id}, form {form_id}: action={response.action}")
+        logger.info(f"Dynamic chat processed for session {session_id}, form {form_id}: action={response.action}, language={language.value}")
         return response
         
     except Exception as e:
         logger.error(f"Dynamic chat processing failed for session {session_id}, form {form_id}: {e}\n{traceback.format_exc()}")
         
-        # Return graceful error response
-        error_reply = "I'm having a technical issue. Could you please try again?"
+        # Return graceful error response in appropriate language
+        language = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
+        error_reply = ("માફ કરશો, તકનીકી સમસ્યા છે. કૃપા કરીને ફરીથી પ્રયાસ કરો." 
+                      if language == Language.GUJARATI else 
+                      "I'm having a technical issue. Could you please try again?")
+        
         error_audio = ""
         try:
             error_audio = tts_to_base64_wav(error_reply)
@@ -466,7 +502,83 @@ async def dynamic_chat(req: DynamicChatRequest):
             reply=error_reply,
             audio_b64=error_audio,
             form_summary=None,
-            completion_status=None
+            completion_status=None,
+            language=language.value
+        )
+
+# Silence management endpoint
+@app.post("/silence-prompt")
+async def silence_prompt(session_id: str = Query(...), language: str = Query("en")):
+    """Handle silence prompts for inactive sessions"""
+    try:
+        lang = Language.GUJARATI if language == "gu" else Language.ENGLISH
+        
+        # Check if session exists
+        session = memory_store.get_or_create_session(session_id)
+        
+        # Generate appropriate silence prompt
+        if lang == Language.GUJARATI:
+            prompt_text = "તમે ત્યાં છો? કૃપા કરીને જવાબ આપો."
+        else:
+            prompt_text = "Are you there? Please respond."
+        
+        # Generate audio
+        audio_b64 = ""
+        try:
+            audio_b64 = tts_to_base64_wav(prompt_text)
+        except Exception as e:
+            logger.warning(f"TTS generation failed for silence prompt: {e}")
+        
+        # Add system message
+        session.add_message(MessageRole.SYSTEM, f"Silence prompt: {prompt_text}")
+        
+        return {
+            "status": "success",
+            "message": prompt_text,
+            "audio_b64": audio_b64,
+            "language": language
+        }
+        
+    except Exception as e:
+        logger.error(f"Silence prompt failed for session {session_id}: {e}")
+        return {"status": "error", "message": "Failed to generate silence prompt"}
+
+# Language support endpoints
+@app.get("/ui-translations/{language}")
+def get_ui_translations(language: str):
+    """Get UI translations for specified language"""
+    try:
+        lang = Language.GUJARATI if language == "gu" else Language.ENGLISH
+        translations = language_support.ui_translations.get(lang.value, {})
+        
+        return {
+            "status": "success",
+            "language": language,
+            "translations": translations
+        }
+    except Exception as e:
+        logger.error(f"Failed to get UI translations: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve translations"
+        )
+
+@app.post("/transliterate")
+def transliterate_text(text: str = Query(...)):
+    """Transliterate English-written Gujarati to proper Gujarati script"""
+    try:
+        transliterated = language_support.transliterate_to_gujarati(text)
+        
+        return {
+            "status": "success",
+            "original": text,
+            "transliterated": transliterated
+        }
+    except Exception as e:
+        logger.error(f"Transliteration failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Transliteration failed"
         )
 
 # Standalone TTS endpoint
