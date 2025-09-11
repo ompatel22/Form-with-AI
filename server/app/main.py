@@ -1,7 +1,3 @@
-import re
-import json
-import base64
-import tempfile
 import os
 import asyncio
 import traceback
@@ -18,6 +14,7 @@ import threading
 from pathlib import Path
 import uuid
 from .llm import GeminiLLM
+from .stt import transcribe_b64, warm_up_models
 from .memory import memory_store, FieldStatus, MessageRole
 from .form_builder import FormSchema, FormField, FieldType, FormResponse, form_store, SAMPLE_FORMS
 from .enhanced_dynamic_chat import EnhancedDynamicFormConversation
@@ -117,6 +114,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ TTS initialization warning: {e}")
     
+    # Initialize STT models
+    try:
+        warm_up_models()
+        logger.info("✅ STT models warmed up successfully")
+    except Exception as e:
+        logger.warning(f"⚠️ STT model warm-up warning: {e}")
+    
     yield
     
     # Shutdown
@@ -131,142 +135,23 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enhanced CORS middleware
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-        "https://*.netlify.app",
-        "https://*.vercel.app"
-    ],
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pydantic models
-class DynamicChatRequest(BaseModel):
-    session_id: str = Field(..., min_length=1, max_length=100)
-    form_id: str = Field(..., min_length=1)
-    message: str = Field("", max_length=1000)
-    manual_form_data: Optional[Dict[str, Any]] = None  # For detecting manual field entries
-    language: Optional[str] = "en"  # Language preference
-    interruption_detected: Optional[bool] = False  # Voice interruption flag
+# Static for synthesized audio
+os.makedirs(settings.MEDIA_DIR, exist_ok=True)
+app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 
-class DynamicChatResponse(BaseModel):
-    action: str
-    reply: str
-    ask: Optional[str] = None
-    updates: Optional[Dict[str, Any]] = None
-    audio_b64: Optional[str] = None
-    form_summary: Optional[Dict[str, Any]] = None
-    completion_status: Optional[Dict[str, Any]] = None
-    field_focus: Optional[str] = None
-    tone: Optional[str] = None
-    language: Optional[str] = "en"  # Response language
-    greeting: Optional[str] = None  # Initial greeting if applicable
-    interruption_handled: Optional[bool] = False  # Whether interruption was processed
+# Singletons
+memory = MemoryStore()
+llm = OpenAILLM()   # ⬅️ changed from GroqLLM()
 
-class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=500)
-
-class TTSResponse(BaseModel):
-    audio: str
-    success: bool = True
-
-class SessionInfoResponse(BaseModel):
-    session_id: str
-    created_at: float
-    last_activity: float
-    completed: bool
-    field_summary: Dict[str, Any]
-    message_count: int
-    context: Dict[str, Any]
-
-class CreateFormRequest(BaseModel):
-    title: str = Field(..., min_length=1, max_length=200)
-    description: Optional[str] = None
-    fields: List[Dict[str, Any]]
-    confirmation_message: str = "Thank you for your response!"
-
-class UpdateFormRequest(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    fields: Optional[List[Dict[str, Any]]] = None
-    confirmation_message: Optional[str] = None
-    is_active: Optional[bool] = None
-
-class FormSubmissionRequest(BaseModel):
-    session_id: str = Field(..., min_length=1)
-    responses: Dict[str, Any]
-
-# Enhanced normalization for speech-to-text input
-def enhanced_normalize_speech(text: str) -> str:
-    """Enhanced speech-to-text normalization with improved patterns"""
-    if not text:
-        return ""
-    
-    s = text.strip()
-    
-    # SUPER AGGRESSIVE email corrections for "at the rate" issue
-    s = re.sub(r'\bat\s*the\s*rate\b', '@', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bat\s*rate\b', '@', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bthe\s*rate\b', '@', s, flags=re.IGNORECASE)
-    s = re.sub(r'\brate\s*([a-zA-Z])', r'@\1', s, flags=re.IGNORECASE)
-    
-    # Handle cases where @ gets converted to "at" 
-    s = re.sub(r'(\w+)\s*at\s*([a-zA-Z]+\.com)', r'\1@\2', s, flags=re.IGNORECASE)
-    s = re.sub(r'(\w+)\s*(\d+)\s*at\s*([a-zA-Z]+\.com)', r'\1\2@\3', s, flags=re.IGNORECASE)
-    
-    # Enhanced dot handling
-    s = re.sub(r'\bdot\s*com\b', '.com', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bdot\s*gmail\s*com\b', '.gmail.com', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bgmail\s*dot\s*com\b', 'gmail.com', s, flags=re.IGNORECASE)
-    s = re.sub(r'\bdot\b', '.', s, flags=re.IGNORECASE)
-    
-    # ENHANCED PHONE NUMBER PARSING - Handle "X times Y" patterns
-    def expand_phone_repeats(text):
-        # Pattern: "3 times 5 4 times 3 2 times 1" -> "555333311"
-        pattern = r'(\d+)\s*times?\s*(\d+)'
-        def replace_repeat(match):
-            digit = match.group(1)
-            count = int(match.group(2))
-            return digit * count
-        return re.sub(pattern, replace_repeat, text)
-    
-    s = expand_phone_repeats(s)
-    
-    # Clean up whitespace
-    s = re.sub(r'\s+', ' ', s).strip()
-    
-    return s
-
-# Exception handlers
-@app.exception_handler(ValueError)
-async def validation_exception_handler(request: Request, exc: ValueError):
-    logger.warning(f"Validation error: {exc}")
-    return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        content={"detail": str(exc), "type": "validation_error"}
-    )
-
-@app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unexpected error: {exc}\n{traceback.format_exc()}")
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "detail": "An internal server error occurred",
-            "type": "server_error",
-            "timestamp": datetime.now().isoformat()
-        }
-    )
-
-# Health check endpoints
 @app.get("/health")
 def health():
     """Basic health check"""
@@ -377,6 +262,40 @@ def get_session_info(session_id: str):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve session information"
+        )
+
+# STT endpoint for language-specific transcription
+class TranscribeRequest(BaseModel):
+    audio_b64: str = Field(..., description="Base64 encoded audio data")
+    language: str = Field("en", description="Language code (en/gu)")
+
+@app.post("/transcribe")
+async def transcribe_audio(req: TranscribeRequest):
+    """Transcribe audio with language-specific STT model"""
+    try:
+        lang = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
+        
+        # Use language-specific STT model
+        transcription = transcribe_b64(req.audio_b64, lang)
+        
+        if not transcription:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to transcribe audio"
+            )
+        
+        return {
+            "status": "success",
+            "transcription": transcription,
+            "language": req.language,
+            "model_used": "vasista22/whisper-gujarati-medium" if lang == Language.GUJARATI else "whisper-english"
+        }
+        
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Transcription service error"
         )
 
 # Main dynamic chat endpoint
@@ -506,21 +425,44 @@ async def dynamic_chat(req: DynamicChatRequest):
             language=language.value
         )
 
-# Silence management endpoint
+# Enhanced silence management endpoint with question repetition
 @app.post("/silence-prompt")
 async def silence_prompt(session_id: str = Query(...), language: str = Query("en")):
-    """Handle silence prompts for inactive sessions"""
+    """Handle silence prompts with enhanced question repetition system"""
     try:
         lang = Language.GUJARATI if language == "gu" else Language.ENGLISH
         
         # Check if session exists
         session = memory_store.get_or_create_session(session_id)
         
-        # Generate appropriate silence prompt
-        if lang == Language.GUJARATI:
-            prompt_text = "તમે ત્યાં છો? કૃપા કરીને જવાબ આપો."
+        # Get session from silence manager to check repetition count
+        silence_session = silence_manager.sessions.get(session_id)
+        
+        if silence_session:
+            repetition_count = silence_session.repetition_count
+            
+            # Generate appropriate silence prompt based on repetition count
+            if repetition_count == 1:
+                if lang == Language.GUJARATI:
+                    prompt_text = "તમે ત્યાં છો?"
+                else:
+                    prompt_text = "Are you there?"
+            elif repetition_count == 2:
+                if lang == Language.GUJARATI:
+                    prompt_text = "તમે હજી પણ ત્યાં છો? કૃપા કરીને જવાબ આપો."
+                else:
+                    prompt_text = "Are you still there? Please respond."
+            else:
+                if lang == Language.GUJARATI:
+                    prompt_text = "હેલો? હું તમારા જવાબની રાહ જોઈ રહ્યો છું. શું આપણે આગળ વધીએ?"
+                else:
+                    prompt_text = "Hello? I'm waiting for your answer. Should we continue?"
         else:
-            prompt_text = "Are you there? Please respond."
+            # Fallback if no silence session
+            if lang == Language.GUJARATI:
+                prompt_text = "તમે ત્યાં છો? કૃપા કરીને જવાબ આપો."
+            else:
+                prompt_text = "Are you there? Please respond."
         
         # Generate audio
         audio_b64 = ""
@@ -536,7 +478,8 @@ async def silence_prompt(session_id: str = Query(...), language: str = Query("en
             "status": "success",
             "message": prompt_text,
             "audio_b64": audio_b64,
-            "language": language
+            "language": language,
+            "repetition_count": silence_session.repetition_count if silence_session else 0
         }
         
     except Exception as e:

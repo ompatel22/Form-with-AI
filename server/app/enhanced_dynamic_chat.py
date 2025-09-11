@@ -415,7 +415,7 @@ class EnhancedDynamicFormConversation:
         if not self.session.context[form_context_key].get("greeting_sent"):
             self.session.context[form_context_key]["greeting_sent"] = True
             
-            # Generate initial greeting
+            # Generate initial greeting WITHOUT meta text
             greeting = language_support.generate_initial_greeting(
                 self.form_schema.title,
                 self.form_schema.description or "",
@@ -427,10 +427,11 @@ class EnhancedDynamicFormConversation:
                 field_question = self._generate_field_question_text(first_field)
                 full_message = f"{greeting}\n\n{field_question}"
                 
-                # Start silence detection
+                # Start enhanced silence detection with question repetition
                 silence_manager.start_silence_detection(
                     self.session.session_id,
-                    self._silence_callback
+                    self._silence_callback,
+                    field_question
                 )
                 
                 return {
