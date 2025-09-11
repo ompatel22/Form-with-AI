@@ -18,6 +18,7 @@ import threading
 from pathlib import Path
 import uuid
 from .llm import GeminiLLM
+from .stt import transcribe_b64, warm_up_models
 from .memory import memory_store, FieldStatus, MessageRole
 from .form_builder import FormSchema, FormField, FieldType, FormResponse, form_store, SAMPLE_FORMS
 from .enhanced_dynamic_chat import EnhancedDynamicFormConversation
@@ -116,6 +117,13 @@ async def lifespan(app: FastAPI):
             logger.warning("⚠️ TTS system may have issues")
     except Exception as e:
         logger.warning(f"⚠️ TTS initialization warning: {e}")
+    
+    # Initialize STT models
+    try:
+        warm_up_models()
+        logger.info("✅ STT models warmed up successfully")
+    except Exception as e:
+        logger.warning(f"⚠️ STT model warm-up warning: {e}")
     
     yield
     
@@ -379,6 +387,40 @@ def get_session_info(session_id: str):
             detail="Failed to retrieve session information"
         )
 
+# STT endpoint for language-specific transcription
+class TranscribeRequest(BaseModel):
+    audio_b64: str = Field(..., description="Base64 encoded audio data")
+    language: str = Field("en", description="Language code (en/gu)")
+
+@app.post("/transcribe")
+async def transcribe_audio(req: TranscribeRequest):
+    """Transcribe audio with language-specific STT model"""
+    try:
+        lang = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
+        
+        # Use language-specific STT model
+        transcription = transcribe_b64(req.audio_b64, lang)
+        
+        if not transcription:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to transcribe audio"
+            )
+        
+        return {
+            "status": "success",
+            "transcription": transcription,
+            "language": req.language,
+            "model_used": "vasista22/whisper-gujarati-medium" if lang == Language.GUJARATI else "whisper-english"
+        }
+        
+    except Exception as e:
+        logger.error(f"Transcription failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Transcription service error"
+        )
+
 # Main dynamic chat endpoint
 @app.post("/dynamic-chat", response_model=DynamicChatResponse)
 async def dynamic_chat(req: DynamicChatRequest):
@@ -506,21 +548,44 @@ async def dynamic_chat(req: DynamicChatRequest):
             language=language.value
         )
 
-# Silence management endpoint
+# Enhanced silence management endpoint with question repetition
 @app.post("/silence-prompt")
 async def silence_prompt(session_id: str = Query(...), language: str = Query("en")):
-    """Handle silence prompts for inactive sessions"""
+    """Handle silence prompts with enhanced question repetition system"""
     try:
         lang = Language.GUJARATI if language == "gu" else Language.ENGLISH
         
         # Check if session exists
         session = memory_store.get_or_create_session(session_id)
         
-        # Generate appropriate silence prompt
-        if lang == Language.GUJARATI:
-            prompt_text = "તમે ત્યાં છો? કૃપા કરીને જવાબ આપો."
+        # Get session from silence manager to check repetition count
+        silence_session = silence_manager.sessions.get(session_id)
+        
+        if silence_session:
+            repetition_count = silence_session.repetition_count
+            
+            # Generate appropriate silence prompt based on repetition count
+            if repetition_count == 1:
+                if lang == Language.GUJARATI:
+                    prompt_text = "તમે ત્યાં છો?"
+                else:
+                    prompt_text = "Are you there?"
+            elif repetition_count == 2:
+                if lang == Language.GUJARATI:
+                    prompt_text = "તમે હજી પણ ત્યાં છો? કૃપા કરીને જવાબ આપો."
+                else:
+                    prompt_text = "Are you still there? Please respond."
+            else:
+                if lang == Language.GUJARATI:
+                    prompt_text = "હેલો? હું તમારા જવાબની રાહ જોઈ રહ્યો છું. શું આપણે આગળ વધીએ?"
+                else:
+                    prompt_text = "Hello? I'm waiting for your answer. Should we continue?"
         else:
-            prompt_text = "Are you there? Please respond."
+            # Fallback if no silence session
+            if lang == Language.GUJARATI:
+                prompt_text = "તમે ત્યાં છો? કૃપા કરીને જવાબ આપો."
+            else:
+                prompt_text = "Are you there? Please respond."
         
         # Generate audio
         audio_b64 = ""
@@ -536,7 +601,8 @@ async def silence_prompt(session_id: str = Query(...), language: str = Query("en
             "status": "success",
             "message": prompt_text,
             "audio_b64": audio_b64,
-            "language": language
+            "language": language,
+            "repetition_count": silence_session.repetition_count if silence_session else 0
         }
         
     except Exception as e:

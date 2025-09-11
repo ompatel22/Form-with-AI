@@ -120,17 +120,58 @@ class LanguageSupport:
         return self.ui_translations.get(language.value, {}).get("voice_commands", {})
     
     def detect_language_switch_command(self, text: str, current_language: Language) -> Optional[Language]:
-        """Detect if user wants to switch language"""
+        """Enhanced language switching detection"""
+        if not text:
+            return None
+        
         text_lower = text.lower().strip()
         
+        # Enhanced English to Gujarati switching patterns
+        english_to_gujarati = [
+            # Direct commands
+            "change to gujarati", "switch to gujarati", "gujarati", "gujarati language",
+            "speak gujarati", "talk in gujarati", "use gujarati", "gujarati please",
+            "gujarati mein bolo", "gujarati me baat karo",
+            
+            # Natural variations
+            "i want gujarati", "can you speak gujarati", "do you know gujarati",
+            "speak in gujarati", "talk gujarati", "gujarati bolna", "gujarati bol",
+            
+            # Mixed patterns
+            "gujarati ma bolo", "gujarati maa", "gujarati ma kaho", 
+            "change language gujarati", "switch language gujarati",
+            
+            # Script mixing
+            "ગુજરાતી", "ગુજરાતી બોલો", "ગુજરાતી માં બોલો"
+        ]
+        
+        # Enhanced Gujarati to English switching patterns  
+        gujarati_to_english = [
+            # Gujarati commands
+            "અંગ્રેજી", "અંગ્રેજી બોલો", "અંગ્રેજીમાં બોલો", "અંગ્રેજી ભાષા",
+            "english", "english bolo", "english mein bolo", "english ma bolo",
+            "change to english", "switch to english", "english please",
+            "speak english", "talk in english", "use english",
+            
+            # Natural variations  
+            "અંગ્રેજીમાં કહો", "અંગ્રેજી ભાષામાં", "english kaho", "english ma kaho",
+            "મને અંગ્રેજી જોઈએ", "i want english", "can you speak english"
+        ]
+        
+        # Check for language switching commands
         if current_language == Language.ENGLISH:
-            gujarati_triggers = ["gujarati", "switch to gujarati", "change to gujarati", "gujaratima"]
-            if any(trigger in text_lower for trigger in gujarati_triggers):
-                return Language.GUJARATI
-        else:
-            english_triggers = ["english", "switch to english", "change to english", "angreji", "અંગ્રેજી"]
-            if any(trigger in text_lower for trigger in english_triggers):
-                return Language.ENGLISH
+            # Check if user wants to switch to Gujarati
+            for pattern in english_to_gujarati:
+                if pattern in text_lower:
+                    logger.info(f"Detected English→Gujarati switch command: '{text}'")
+                    return Language.GUJARATI
+        
+        elif current_language == Language.GUJARATI:
+            # Check if user wants to switch to English
+            for pattern in gujarati_to_english:
+                if pattern in text_lower:
+                    logger.info(f"Detected Gujarati→English switch command: '{text}'")
+                    return Language.ENGLISH
         
         return None
     
@@ -235,59 +276,61 @@ class LanguageSupport:
         text_lower = text.lower()
         return any(indicator in text_lower for indicator in gujarati_indicators)
     
-    def generate_initial_greeting(self, 
-                                form_title: str, 
-                                form_description: str, 
-                                language: Language = Language.ENGLISH) -> str:
-        """Generate initial greeting with form context"""
+    def generate_initial_greeting(self, form_title: str, form_description: str, language: Language) -> str:
+        """Generate contextual initial greeting without meta text"""
         try:
-            language_name = "Gujarati" if language == Language.GUJARATI else "English"
-            
-            prompt = f"""
-            Generate a warm, welcoming greeting message in {language_name} for a voice-enabled form filling experience.
-            
-            Form Title: {form_title}
-            Form Description: {form_description}
-            
-            The greeting should:
-            1. Welcome the user warmly
-            2. Explain this is a voice-enabled form assistant
-            3. Mention they can speak naturally or type
-            4. Briefly explain the form's purpose
-            5. Mention they can switch languages anytime
-            6. Be encouraging and helpful
-            7. End by asking for the first piece of information
-            
-            Keep it conversational and friendly, not robotic.
-            {"Use proper Gujarati script and cultural expressions" if language == Language.GUJARATI else "Use natural English expressions"}
-            
-            Return only the greeting text, no JSON.
-            """
+            if language == Language.GUJARATI:
+                prompt = f"""
+                Generate a natural greeting in Gujarati for helping with a form titled "{form_title}".
+                Description: {form_description}
+                
+                Requirements:
+                - Use natural, conversational Gujarati
+                - Be warm and helpful
+                - Explain that you'll help fill the form
+                - Keep it concise
+                - NO meta text or references to "greeting message"
+                - Start directly with the greeting
+                """
+            else:
+                prompt = f"""
+                Generate a natural greeting in English for helping with a form titled "{form_title}".
+                Description: {form_description}
+                
+                Requirements:
+                - Be warm and helpful
+                - Explain that you'll help fill the form
+                - Keep it concise
+                - NO meta text or references to "greeting message"
+                - Start directly with the greeting
+                """
             
             response = self.model.generate_content(
                 prompt,
                 generation_config={
-                    "temperature": 0.4,
-                    "top_p": 0.9,
-                    "max_output_tokens": 512
+                    "temperature": 0.5,
+                    "top_p": 0.8,
+                    "max_output_tokens": 150
                 }
             )
             
             if response and response.text:
-                return response.text.strip()
+                greeting = response.text.strip()
+                # Clean up any meta references more aggressively
+                greeting = re.sub(r'.*warm greeting.*', '', greeting, flags=re.IGNORECASE)
+                greeting = re.sub(r'.*greeting message.*', '', greeting, flags=re.IGNORECASE)
+                greeting = re.sub(r'^\[.*?\]', '', greeting).strip()
+                greeting = re.sub(r'^.*?:', '', greeting).strip()  # Remove any prefix with colon
+                return greeting
             
-            # Fallback greeting
-            if language == Language.GUJARATI:
-                return f"નમસ્તે! આ {form_title} માટે AI સહાયક છે. તમે બોલી શકો છો અથવા લખી શકો છો. ચાલો શરૂ કરીએ!"
-            else:
-                return f"Hello! I'm your AI assistant for {form_title}. You can speak naturally or type your responses. Let's get started!"
-                
         except Exception as e:
-            logger.error(f"Greeting generation failed: {e}")
-            if language == Language.GUJARATI:
-                return f"નમસ્તે! {form_title} માટે AI સહાયક. ચાલો શરૂ કરીએ!"
-            else:
-                return f"Hello! Welcome to {form_title}. Let's begin!"
+            logger.error(f"Failed to generate {language.value} greeting: {e}")
+        
+        # Enhanced fallback greetings
+        if language == Language.GUJARATI:
+            return f"નમસ્તે! હું તમારો AI સહાયક છું અને હું તમને '{form_title}' ફોર્મ ભરવામાં મદદ કરીશ. ચાલો શરૂ કરીએ!"
+        else:
+            return f"Hello! I'm your AI assistant and I'll help you fill out the '{form_title}' form. Let's get started!"
 
 # Global language support instance
 language_support = LanguageSupport()
