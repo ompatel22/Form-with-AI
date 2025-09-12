@@ -321,7 +321,26 @@ class LanguageSupport:
                 greeting = re.sub(r'.*greeting message.*', '', greeting, flags=re.IGNORECASE)
                 greeting = re.sub(r'^\[.*?\]', '', greeting).strip()
                 greeting = re.sub(r'^.*?:', '', greeting).strip()  # Remove any prefix with colon
-                return greeting
+                
+                # Remove JSON-like formatting if present
+                greeting = re.sub(r'^\{.*?"response":\s*"([^"]+)".*?\}$', r'\1', greeting, flags=re.DOTALL)
+                greeting = re.sub(r'```json.*?```', '', greeting, flags=re.DOTALL).strip()
+                greeting = re.sub(r'```.*?```', '', greeting, flags=re.DOTALL).strip()
+                
+                # If still contains JSON-like structure, extract the actual greeting
+                if '{' in greeting and '"' in greeting:
+                    try:
+                        import json
+                        parsed = json.loads(greeting)
+                        if isinstance(parsed, dict):
+                            greeting = parsed.get('response', parsed.get('greeting', parsed.get('message', greeting)))
+                    except:
+                        # Try to extract from simple JSON patterns
+                        match = re.search(r'"([^"]{20,})"', greeting)
+                        if match:
+                            greeting = match.group(1)
+                
+                return greeting.strip()
             
         except Exception as e:
             logger.error(f"Failed to generate {language.value} greeting: {e}")

@@ -343,6 +343,20 @@ class EnhancedDynamicFormConversation:
         
         return None
     
+    def get_next_required_field(self) -> Optional[FormField]:
+        """Get the next required field that needs to be filled"""
+        sorted_fields = sorted(self.form_schema.fields, key=lambda f: f.order)
+        
+        for field in sorted_fields:
+            if field.validation.required:
+                field_key = self._get_field_key(field.name)
+                field_info = self.session.fields.get(field_key, None)
+                
+                if not field_info or field_info.status in [FieldStatus.PENDING, FieldStatus.INVALID]:
+                    return field
+        
+        return None
+    
     def process_user_input(self, user_text: str) -> Dict[str, Any]:
         """Enhanced user input processing with multilingual support"""
         form_context_key = self._get_form_context_key()
@@ -416,6 +430,65 @@ class EnhancedDynamicFormConversation:
                             "language": self.current_language.value,
                             "reply": done_msg
                         }
+        
+        # Check for form submission commands
+        submission_commands = {
+            Language.ENGLISH: ["submit", "submit form", "submit the form", "submit this form", "submit karo", "submit kar", "send form", "send it"],
+            Language.GUJARATI: ["પ્રસ્તુત કરો", "સબમિટ કરો", "ફોર્મ સબમિટ કરો", "ફોર્મ પ્રસ્તુત કરો", "મોકલો", "મોકલી દો"]
+        }
+        
+        user_text_lower = user_text.lower().strip()
+        is_submission_command = False
+        
+        for lang, commands in submission_commands.items():
+            for command in commands:
+                if command.lower() in user_text_lower:
+                    is_submission_command = True
+                    break
+            if is_submission_command:
+                break
+        
+        if is_submission_command:
+            # Check if form is complete enough to submit (all required fields)
+            completion_status = self.get_completion_status()
+            if completion_status.get("is_complete", False):
+                # Form is complete, trigger submission
+                submit_msg = "ફોર્મ સબમિટ કરી દીધું! ધન્યવાદ." if self.current_language == Language.GUJARATI else "Form submitted successfully! Thank you."
+                return {
+                    "action": "submit",
+                    "updates": {},
+                    "ask": submit_msg,
+                    "field_focus": None,
+                    "tone": "success",
+                    "language": self.current_language.value,
+                    "reply": submit_msg
+                }
+            else:
+                # Form not complete, inform user about required fields
+                next_required_field = self.get_next_required_field()
+                if next_required_field:
+                    pending_msg = f"હજી આ આવશ્યક છે: {self._generate_field_question_text(next_required_field)}" if self.current_language == Language.GUJARATI else f"Please complete this required field: {self._generate_field_question_text(next_required_field)}"
+                else:
+                    # No required fields left, allow submission
+                    submit_msg = "ફોર્મ સબમિટ કરી દીધું! ધન્યવાદ." if self.current_language == Language.GUJARATI else "Form submitted successfully! Thank you."
+                    return {
+                        "action": "submit",
+                        "updates": {},
+                        "ask": submit_msg,
+                        "field_focus": None,
+                        "tone": "success",
+                        "language": self.current_language.value,
+                        "reply": submit_msg
+                    }
+                return {
+                    "action": "ask",
+                    "updates": {},
+                    "ask": pending_msg,
+                    "field_focus": current_field.name,
+                    "tone": "helpful",
+                    "language": self.current_language.value,
+                    "reply": pending_msg
+                }
         
         # Check if conversation needs to start with greeting (fix initial JSON formatting)
         if not self.session.context[form_context_key].get("greeting_sent"):

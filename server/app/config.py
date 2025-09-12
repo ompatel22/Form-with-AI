@@ -23,6 +23,9 @@ class Settings(BaseSettings):
 
     # Media directory
     MEDIA_DIR: str = "./media"   # default fallback
+    
+    # Google credentials for TTS
+    GOOGLE_APPLICATION_CREDENTIALS: str = ""
 
     class Config:
         env_file = ".env"

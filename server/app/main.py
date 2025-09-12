@@ -473,6 +473,43 @@ async def dynamic_chat(req: DynamicChatRequest):
         form_summary = conversation.get_form_summary()
         completion_status = conversation.get_completion_status()
         
+        # Handle form submission if action is "submit"
+        if llm_response.get("action") == "submit":
+            try:
+                # Prepare form data from session
+                form_data = {}
+                form_context_key = f"form_{form_id}"
+                
+                for field in form.fields:
+                    field_key = f"{form_context_key}_{field.name}"
+                    field_info = session.fields.get(field_key)
+                    if field_info and field_info.value:
+                        form_data[field.name] = field_info.value
+                
+                # Submit form
+                response_data = {
+                    "form_id": form_id,
+                    "session_id": session_id,
+                    "responses": form_data
+                }
+                
+                form_response = form_store.submit_response(response_data)
+                
+                # Log successful submission
+                logger.info(f"Form {form_id} submitted successfully by session {session_id}")
+                
+                # Update LLM response to include submission confirmation
+                confirmation_msg = f"✅ {form.confirmation_message}"
+                llm_response["ask"] = confirmation_msg
+                llm_response["reply"] = confirmation_msg
+                
+            except Exception as e:
+                logger.error(f"Form submission failed: {e}")
+                error_msg = "ફોર્મ સબમિટ કરવામાં સમસ્યા થઈ." if language == Language.GUJARATI else "Failed to submit form."
+                llm_response["ask"] = error_msg
+                llm_response["reply"] = error_msg
+                llm_response["action"] = "error"
+        
         # Log response details
         logger.info(f"Dynamic chat response: action={llm_response.get('action')}, ask='{llm_response.get('ask')}', field_focus={llm_response.get('field_focus')}, language={language.value}")
         
