@@ -38,3 +38,5 @@ pytest_cache/
 *.egg-info/
 build/
 dist/
+
+server/google-credentials.json
