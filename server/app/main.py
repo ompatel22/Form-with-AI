@@ -1,3 +1,7 @@
+import re
+import json
+import base64
+import tempfile
 import os
 import asyncio
 import traceback
@@ -21,6 +25,7 @@ from .enhanced_dynamic_chat import EnhancedDynamicFormConversation
 from .language_support import Language, language_support
 from .silence_manager import silence_manager
 from .voice_interruption import voice_interruption_handler
+from .google_tts import unified_tts_service
 
 # Configure logging
 logging.basicConfig(
@@ -33,61 +38,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global TTS engine with thread safety
-_tts_lock = threading.Lock()
-_tts_engine = None
-
-def get_tts_engine():
-    """Get thread-safe TTS engine instance"""
-    global _tts_engine
-    if _tts_engine is None:
-        _tts_engine = pyttsx3.init()
-        _tts_engine.setProperty("rate", 150)
-        _tts_engine.setProperty("volume", 0.9)
-    return _tts_engine
-
-def tts_to_base64_wav(text: str) -> str:
-    """Convert text to speech with robust error handling"""
+async def tts_to_base64_wav(text: str, language: Language = Language.ENGLISH) -> str:
+    """Convert text to speech using Google TTS with enhanced multilingual support"""
     if not text or not text.strip():
         return ""
     
-    # Sanitize text for TTS
-    sanitized_text = re.sub(r'[^\w\s\.,!?\-]', '', text.strip())
-    if not sanitized_text:
-        sanitized_text = "I had trouble generating audio for that response."
-    
-    temp_path = None
     try:
-        with _tts_lock:
-            engine = get_tts_engine()
-            
-            # Create temp file with proper cleanup
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tf:
-                temp_path = tf.name
-            
-            # Generate speech
-            engine.save_to_file(sanitized_text, temp_path)
-            engine.runAndWait()
-            
-            # Read and encode
-            if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
-                with open(temp_path, "rb") as f:
-                    audio_data = f.read()
-                return base64.b64encode(audio_data).decode("utf-8")
+        # Sanitize text for TTS
+        sanitized_text = re.sub(r'[^\w\s\.,!?\-\u0A80-\u0AFF]', '', text.strip())  # Include Gujarati unicode range
+        if not sanitized_text:
+            if language == Language.GUJARATI:
+                sanitized_text = "માફ કરશો, આ જવાબ માટે ઓડિયો બનાવવામાં મુશ્કેલી થઈ."
             else:
-                logger.warning("TTS generated empty file")
-                return ""
-                
+                sanitized_text = "I had trouble generating audio for that response."
+        
+        # Use unified TTS service with Google Cloud TTS and fallback
+        audio_content = await unified_tts_service.synthesize_speech(
+            text=sanitized_text,
+            language=language,
+            gender="NEUTRAL"
+        )
+        
+        if audio_content:
+            return unified_tts_service.to_base64_wav(audio_content)
+        else:
+            logger.warning(f"TTS generated empty audio for {language.value}")
+            return ""
+            
     except Exception as e:
-        logger.error(f"TTS generation failed: {e}")
-        return ""  # Return empty string instead of failing
-    finally:
-        # Clean up temp file
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup TTS temp file: {cleanup_error}")
+        logger.error(f"Enhanced TTS generation failed for {language.value}: {e}")
+        return ""
 
 # Lifespan context manager for startup/shutdown
 @asynccontextmanager
@@ -104,15 +84,15 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Failed to initialize LLM: {e}")
         raise
     
-    # Test TTS
+    # Test TTS with enhanced multilingual support
     try:
-        test_audio = tts_to_base64_wav("System ready")
+        test_audio = await tts_to_base64_wav("System ready", Language.ENGLISH)
         if test_audio:
-            logger.info("✅ TTS system initialized successfully")
+            logger.info("✅ Enhanced TTS system initialized successfully")
         else:
-            logger.warning("⚠️ TTS system may have issues")
+            logger.warning("⚠️ Enhanced TTS system may have issues")
     except Exception as e:
-        logger.warning(f"⚠️ TTS initialization warning: {e}")
+        logger.warning(f"⚠️ Enhanced TTS initialization warning: {e}")
     
     # Initialize STT models
     try:
@@ -135,23 +115,142 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS
+# Enhanced CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "https://*.netlify.app",
+        "https://*.vercel.app"
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Static for synthesized audio
-os.makedirs(settings.MEDIA_DIR, exist_ok=True)
-app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
+# Pydantic models
+class DynamicChatRequest(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=100)
+    form_id: str = Field(..., min_length=1)
+    message: str = Field("", max_length=1000)
+    manual_form_data: Optional[Dict[str, Any]] = None  # For detecting manual field entries
+    language: Optional[str] = "en"  # Language preference
+    interruption_detected: Optional[bool] = False  # Voice interruption flag
 
-# Singletons
-memory = MemoryStore()
-llm = OpenAILLM()   # ⬅️ changed from GroqLLM()
+class DynamicChatResponse(BaseModel):
+    action: str
+    reply: str
+    ask: Optional[str] = None
+    updates: Optional[Dict[str, Any]] = None
+    audio_b64: Optional[str] = None
+    form_summary: Optional[Dict[str, Any]] = None
+    completion_status: Optional[Dict[str, Any]] = None
+    field_focus: Optional[str] = None
+    tone: Optional[str] = None
+    language: Optional[str] = "en"  # Response language
+    greeting: Optional[str] = None  # Initial greeting if applicable
+    interruption_handled: Optional[bool] = False  # Whether interruption was processed
 
+class TTSRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=500)
+
+class TTSResponse(BaseModel):
+    audio: str
+    success: bool = True
+
+class SessionInfoResponse(BaseModel):
+    session_id: str
+    created_at: float
+    last_activity: float
+    completed: bool
+    field_summary: Dict[str, Any]
+    message_count: int
+    context: Dict[str, Any]
+
+class CreateFormRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    description: Optional[str] = None
+    fields: List[Dict[str, Any]]
+    confirmation_message: str = "Thank you for your response!"
+
+class UpdateFormRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    fields: Optional[List[Dict[str, Any]]] = None
+    confirmation_message: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class FormSubmissionRequest(BaseModel):
+    session_id: str = Field(..., min_length=1)
+    responses: Dict[str, Any]
+
+# Enhanced normalization for speech-to-text input
+def enhanced_normalize_speech(text: str) -> str:
+    """Enhanced speech-to-text normalization with improved patterns"""
+    if not text:
+        return ""
+    
+    s = text.strip()
+    
+    # SUPER AGGRESSIVE email corrections for "at the rate" issue
+    s = re.sub(r'\bat\s*the\s*rate\b', '@', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bat\s*rate\b', '@', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bthe\s*rate\b', '@', s, flags=re.IGNORECASE)
+    s = re.sub(r'\brate\s*([a-zA-Z])', r'@\1', s, flags=re.IGNORECASE)
+    
+    # Handle cases where @ gets converted to "at" 
+    s = re.sub(r'(\w+)\s*at\s*([a-zA-Z]+\.com)', r'\1@\2', s, flags=re.IGNORECASE)
+    s = re.sub(r'(\w+)\s*(\d+)\s*at\s*([a-zA-Z]+\.com)', r'\1\2@\3', s, flags=re.IGNORECASE)
+    
+    # Enhanced dot handling
+    s = re.sub(r'\bdot\s*com\b', '.com', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bdot\s*gmail\s*com\b', '.gmail.com', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bgmail\s*dot\s*com\b', 'gmail.com', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bdot\b', '.', s, flags=re.IGNORECASE)
+    
+    # ENHANCED PHONE NUMBER PARSING - Handle "X times Y" patterns
+    def expand_phone_repeats(text):
+        # Pattern: "3 times 5 4 times 3 2 times 1" -> "555333311"
+        pattern = r'(\d+)\s*times?\s*(\d+)'
+        def replace_repeat(match):
+            digit = match.group(1)
+            count = int(match.group(2))
+            return digit * count
+        return re.sub(pattern, replace_repeat, text)
+    
+    s = expand_phone_repeats(s)
+    
+    # Clean up whitespace
+    s = re.sub(r'\s+', ' ', s).strip()
+    
+    return s
+
+# Exception handlers
+@app.exception_handler(ValueError)
+async def validation_exception_handler(request: Request, exc: ValueError):
+    logger.warning(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": str(exc), "type": "validation_error"}
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unexpected error: {exc}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "detail": "An internal server error occurred",
+            "type": "server_error",
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
+# Health check endpoints
 @app.get("/health")
 def health():
     """Basic health check"""
@@ -162,7 +261,7 @@ def health():
     }
 
 @app.get("/health/detailed")
-def detailed_health():
+async def detailed_health():
     """Detailed health check with system status"""
     try:
         # Test LLM
@@ -175,10 +274,10 @@ def detailed_health():
         except Exception:
             llm_status = "unhealthy"
         
-        # Test TTS
+        # Test TTS with enhanced system
         tts_status = "healthy"
         try:
-            test_audio = tts_to_base64_wav("test")
+            test_audio = await tts_to_base64_wav("test", Language.ENGLISH)
             if not test_audio:
                 tts_status = "degraded"
         except Exception:
@@ -356,20 +455,15 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Get conversation response
         llm_response = conversation.process_user_input(normalized_message)
         
-        # Generate audio for response (in appropriate language)
+        # Generate audio for response with enhanced multilingual support
         audio_b64 = ""
         reply_text = llm_response.get("reply", llm_response.get("ask", ""))
         if reply_text:
             try:
-                # Use appropriate TTS based on language
-                if language == Language.GUJARATI:
-                    # For Gujarati, we might need different TTS handling
-                    # For now, use the same TTS but could be enhanced later
-                    audio_b64 = tts_to_base64_wav(reply_text)
-                else:
-                    audio_b64 = tts_to_base64_wav(reply_text)
+                # Use language-aware TTS generation
+                audio_b64 = await tts_to_base64_wav(reply_text, language)
             except Exception as e:
-                logger.warning(f"TTS generation failed: {e}")
+                logger.warning(f"Enhanced TTS generation failed: {e}")
         
         # Add agent response to session
         if reply_text:
@@ -412,7 +506,7 @@ async def dynamic_chat(req: DynamicChatRequest):
         
         error_audio = ""
         try:
-            error_audio = tts_to_base64_wav(error_reply)
+            error_audio = await tts_to_base64_wav(error_reply, language)
         except Exception:
             pass
         
@@ -464,12 +558,12 @@ async def silence_prompt(session_id: str = Query(...), language: str = Query("en
             else:
                 prompt_text = "Are you there? Please respond."
         
-        # Generate audio
+        # Generate audio with enhanced multilingual TTS
         audio_b64 = ""
         try:
-            audio_b64 = tts_to_base64_wav(prompt_text)
+            audio_b64 = await tts_to_base64_wav(prompt_text, lang)
         except Exception as e:
-            logger.warning(f"TTS generation failed for silence prompt: {e}")
+            logger.warning(f"Enhanced TTS generation failed for silence prompt: {e}")
         
         # Add system message
         session.add_message(MessageRole.SYSTEM, f"Silence prompt: {prompt_text}")
@@ -527,13 +621,16 @@ def transliterate_text(text: str = Query(...)):
 # Standalone TTS endpoint
 @app.post("/tts", response_model=TTSResponse)
 async def text_to_speech(req: TTSRequest):
-    """Convert text to speech"""
+    """Convert text to speech with enhanced multilingual support"""
     try:
-        audio_b64 = tts_to_base64_wav(req.text)
+        # Detect language from text content
+        language = Language.GUJARATI if language_support._is_transliterated_gujarati(req.text) or any(ord(char) >= 0x0A80 and ord(char) <= 0x0AFF for char in req.text) else Language.ENGLISH
+        
+        audio_b64 = await tts_to_base64_wav(req.text, language)
         return TTSResponse(audio=audio_b64, success=bool(audio_b64))
         
     except Exception as e:
-        logger.error(f"TTS conversion failed: {e}")
+        logger.error(f"Enhanced TTS conversion failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Text-to-speech conversion failed"

@@ -350,19 +350,25 @@ class EnhancedDynamicFormConversation:
         # Update activity for silence manager
         silence_manager.update_activity(self.session.session_id)
         
-        # Check for language switch command first
+        # Check for language switch command first with improved detection
         new_language = language_support.detect_language_switch_command(user_text, self.current_language)
         if new_language:
             self.set_language(new_language)
-            switch_message = language_support.get_ui_text("language_switch", new_language)
+            
+            # Generate appropriate language switch confirmation
+            if new_language == Language.GUJARATI:
+                switch_message = "હા! હવે હું ગુજરાતીમાં વાત કરીશ. ચાલો આગળ વધીએ."
+            else:
+                switch_message = "Yes! I'll now speak in English. Let's continue."
+            
             return {
                 "action": "language_switch",
                 "updates": {},
-                "ask": f"✓ {switch_message}",
+                "ask": switch_message,
                 "field_focus": None,
                 "tone": "friendly",
                 "language": new_language.value,
-                "reply": f"✓ {switch_message}"
+                "reply": switch_message
             }
         
         # Check for voice interruption commands
@@ -411,11 +417,11 @@ class EnhancedDynamicFormConversation:
                             "reply": done_msg
                         }
         
-        # Check if conversation needs to start with greeting
+        # Check if conversation needs to start with greeting (fix initial JSON formatting)
         if not self.session.context[form_context_key].get("greeting_sent"):
             self.session.context[form_context_key]["greeting_sent"] = True
             
-            # Generate initial greeting WITHOUT meta text
+            # Generate initial greeting WITHOUT JSON meta text
             greeting = language_support.generate_initial_greeting(
                 self.form_schema.title,
                 self.form_schema.description or "",
@@ -425,13 +431,22 @@ class EnhancedDynamicFormConversation:
             first_field = self.get_next_field()
             if first_field:
                 field_question = self._generate_field_question_text(first_field)
-                full_message = f"{greeting}\n\n{field_question}"
                 
-                # Start enhanced silence detection with question repetition
+                # Clean response - no JSON formatting in the message
+                clean_greeting = greeting.strip()
+                clean_question = field_question.strip()
+                full_message = f"{clean_greeting}\n\n{clean_question}"
+                
+                # Start enhanced silence detection with intelligent context
                 silence_manager.start_silence_detection(
                     self.session.session_id,
                     self._silence_callback,
-                    field_question
+                    clean_question,
+                    context={
+                        "field_name": first_field.name,
+                        "field_type": first_field.type.value,
+                        "awaiting_field_response": True
+                    }
                 )
                 
                 return {
@@ -441,7 +456,7 @@ class EnhancedDynamicFormConversation:
                     "field_focus": first_field.name,
                     "tone": "friendly",
                     "language": self.current_language.value,
-                    "greeting": greeting,
+                    "greeting": clean_greeting,
                     "reply": full_message
                 }
         
@@ -615,14 +630,23 @@ class EnhancedDynamicFormConversation:
             silence_manager.stop_session(self.session.session_id)
             
         elif llm_response.get("action") == "set" and validated_updates:
-            # Move to next field
+            # Move to next field with intelligent context
             llm_response["field_focus"] = next_field.name
             if not llm_response.get("ask"):
                 llm_response["ask"] = self._generate_field_question_text(next_field)
                 llm_response["reply"] = llm_response["ask"]
                 
-            # Update silence manager with new field
-            silence_manager.update_current_field(self.session.session_id, next_field.name)
+            # Update silence manager with new field context
+            silence_manager.start_silence_detection(
+                self.session.session_id,
+                self._silence_callback,
+                llm_response["ask"],
+                context={
+                    "field_name": next_field.name,
+                    "field_type": next_field.type.value,
+                    "awaiting_field_response": True
+                }
+            )
         
         # Ensure reply is set
         if not llm_response.get("reply"):

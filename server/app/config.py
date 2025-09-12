@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List, Optional
+from typing import List
 import os
 
 class Settings(BaseSettings):
@@ -11,9 +11,6 @@ class Settings(BaseSettings):
     # Gemini
     GEMINI_API_KEY: str
     GEMINI_MODEL: str = "gemini-2.0-flash-lite"
-
-    # Google Cloud
-    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
 
     # Whisper
     WHISPER_MODEL_SIZE: str = "base"
