@@ -236,16 +236,28 @@ class LanguageSupport:
             )
             
             if response and response.text:
+                response_text = response.text.strip()
                 try:
-                    parsed = json.loads(response.text.strip())
+                    # First, try direct parsing
+                    parsed = json.loads(response_text)
                     return parsed
                 except json.JSONDecodeError:
-                    # Fallback if JSON parsing fails
-                    return {
-                        "response": response.text.strip(),
-                        "language": target_language.value,
-                        "transliteration": processed_input if processed_input != user_input else None
-                    }
+                    # If direct parsing fails, try to extract JSON from markdown or other text
+                    json_patterns = [
+                        r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # Handles nested JSON
+                        r'\{.*\}'  # Greedy fallback
+                    ]
+                    for pattern in json_patterns:
+                        matches = re.findall(pattern, response_text, re.DOTALL)
+                        for match in matches:
+                            try:
+                                return json.loads(match)
+                            except json.JSONDecodeError:
+                                continue
+                
+                # If all JSON parsing fails, treat the whole text as the response
+                logger.warning(f"Could not parse JSON from LLM response in language_support: {response_text}")
+                return {"response": response_text, "language": target_language.value}
             
             # Fallback response
             fallback_text = self.get_ui_text("are_you_there", target_language)

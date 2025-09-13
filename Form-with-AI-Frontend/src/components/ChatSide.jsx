@@ -12,7 +12,7 @@ const ChatSide = ({
   onReset,
   isPlaying,
   onSkipAudio,
-  language = "en",
+  language = "gu",
   onLanguageChange
 }) => {
   const messagesEndRef = useRef(null);
@@ -106,13 +106,13 @@ const ChatSide = ({
           
           <div className="flex items-center gap-2">
             {/* Language Switch Button */}
-            <button
+            {/* <button
               onClick={handleLanguageSwitch}
               className="px-3 py-1.5 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-500 transition-colors"
               title={language === "en" ? "Switch to Gujarati" : "Switch to English"}
             >
               {language === "en" ? "ગુ" : "EN"}
-            </button>
+            </button> */}
             
             {/* Phone Call Status */}
             <div className={`px-3 py-1.5 rounded-lg text-sm border ${statusInfo.bg} ${statusInfo.color} ${statusInfo.border}`}>
@@ -236,7 +236,7 @@ const ChatSide = ({
           </p>
         </div>
 
-        {/* Reset Button */}
+        {/* Reset Button
         <div className="mt-4 flex justify-center">
           <button
             onClick={onReset}
@@ -244,7 +244,7 @@ const ChatSide = ({
           >
             {language === "en" ? "🔄 Reset Chat" : "🔄 ચેટ રીસેટ કરો"}
           </button>
-        </div>
+        </div> */}
       </div>
     </div>
   );

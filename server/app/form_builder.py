@@ -196,16 +196,16 @@ SAMPLE_FORMS = {
                 "name": "program",
                 "type": "dropdown",
                 "label": "Program of Interest",
-                "options": ["Computer Science", "Engineering", "Business", "Arts", "Other"],
+                "options": ["Engineering", "Medical", "Business", "Arts", "Finance", "Law", "Other"],
                 "validation": {"required": True},
                 "order": 4
             },
             {
                 "name": "experience",
                 "type": "linear_scale",
-                "label": "Rate your programming experience",
+                "label": "Rate your prior knowledge in this field",
                 "scale_min": 1,
-                "scale_max": 10,
+                "scale_max": 5,
                 "scale_min_label": "Beginner",
                 "scale_max_label": "Expert",
                 "order":5
@@ -216,7 +216,7 @@ SAMPLE_FORMS = {
                 "label": "Additional Information",
                 "description": "Tell us anything else you'd like us to know",
                 "validation": {"required": False},
-                "order": 8
+                "order": 6
             }
         ]
     },

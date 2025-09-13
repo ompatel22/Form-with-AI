@@ -38,45 +38,45 @@ class IntelligentSilenceManager:
     
     def __init__(self):
         self.sessions: Dict[str, SilenceSession] = {}
-        self.silence_timeout = 3.0  # 3 seconds before first prompt (as requested)
+        self.silence_timeout = 5.0  # 5 seconds before first prompt (as requested)
         self.max_repetitions = 3   # Maximum number of question repetitions
-        self.repetition_interval = 4.0  # 4 seconds between repetitions
+        self.repetition_interval = 5.0  # 5 seconds between repetitions  
         self.session_timeout = 30.0  # 30 seconds total timeout
         
-        # Intelligent silence prompts based on context
+        # Specific silence prompts as requested by user
         self.context_aware_prompts = {
             Language.ENGLISH: {
                 "initial": {
-                    1: "I'm here when you're ready.",
-                    2: "Are you still there? Take your time.",
-                    3: "Hello? I'm waiting for your response. Should we continue with the next question?"
+                    1: "Are you there or not?",
+                    2: "Are you there or not? Please respond.",
+                    3: "Are you there or not? I'm waiting for your response."
                 },
                 "form_field": {
-                    1: "I'm waiting for your {field_type}. Please respond when ready.",
-                    2: "Could you please provide your {field_type}? I'm here to help.",
-                    3: "I still need your {field_type} to continue. Are you having trouble with this question?"
+                    1: "Are you there or not?",
+                    2: "Are you there or not? Please provide your {field_type}.",
+                    3: "Are you there or not? I still need your {field_type} to continue."
                 },
                 "confirmation": {
-                    1: "Please confirm if this information is correct.",
-                    2: "I need your confirmation to proceed. Please say yes or no.",
-                    3: "Are you still there? Please confirm so we can move forward."
+                    1: "Are you there or not?",
+                    2: "Are you there or not? Please confirm to proceed.",
+                    3: "Are you there or not? Please confirm so we can move forward."
                 }
             },
             Language.GUJARATI: {
                 "initial": {
-                    1: "હું અહીં છું જ્યારે તમે તૈયાર હો.",
-                    2: "તમે હજી પણ ત્યાં છો? તમારો સમય લો.",
-                    3: "હેલો? હું તમારા જવાબની રાહ જોઈ રહ્યો છું. શું આપણે આગળના પ્રશ્ન સાથે આગળ વધીએ?"
+                    1: "તમે ત્યાં છો કે નહીં?",
+                    2: "તમે ત્યાં છો કે નહીં? કૃપા કરીને જવાબ આપો.",
+                    3: "તમે ત્યાં છો કે નહીં? હું તમારા જવાબની રાહ જોઈ રહ્યો છું."
                 },
                 "form_field": {
-                    1: "હું તમારા {field_type} ની રાહ જોઈ રહ્યો છું. કૃપા કરીને તૈયાર થયા પછી જવાબ આપો.",
-                    2: "કૃપા કરીને તમારું {field_type} આપો? હું મદદ કરવા અહીં છું.",
-                    3: "મને હજી પણ તમારા {field_type} ની જરૂર છે. શું તમને આ પ્રશ્ન સાથે મુશ્કેલી છે?"
+                    1: "તમે ત્યાં છો કે નહીં?",
+                    2: "તમે ત્યાં છો કે નહીં? કૃપા કરીને તમારું {field_type} આપો.",
+                    3: "તમે ત્યાં છો કે નહીં? મને હજી પણ તમારા {field_type} ની જરૂર છે."
                 },
                 "confirmation": {
-                    1: "કૃપા કરીને પુષ્ટિ કરો કે આ માહિતી સાચી છે.",
-                    2: "આગળ વધવા માટે મને તમારી પુષ્ટિ જોઈએ. કૃપા કરીને હા અથવા ના કહો.",
-                    3: "તમે હજી પણ ત્યાં છો? કૃપા કરીને પુષ્ટિ કરો જેથી આપણે આગળ વધી શકીએ."
+                    1: "તમે ત્યાં છો કે નહીં?",
+                    2: "તમે ત્યાં છો કે નહીં? કૃપા કરીને પુષ્ટિ કરો.",
+                    3: "તમે ત્યાં છો કે નહીં? કૃપા કરીને પુષ્ટિ કરો જેથી આપણે આગળ વધી શકીએ."
                 }
             }
         }

@@ -199,11 +199,13 @@ class EnhancedDynamicFormConversation:
         if not self.form_schema:
             raise ValueError(f"Form {form_id} not found")
         
-        # Language state
-        self.current_language = Language.ENGLISH
-        
         # Enhanced session management
         self._initialize_form_session()
+        
+        # Language state - Load from session to be authoritative
+        form_context_key = self._get_form_context_key()
+        session_lang_code = self.session.context.get(form_context_key, {}).get("language", "en")
+        self.current_language = Language(session_lang_code)
         
         # Initialize LLM with enhanced system prompt
         self.model = genai.GenerativeModel(
@@ -296,6 +298,7 @@ class EnhancedDynamicFormConversation:
         2. STRICT CHECKBOX VALIDATION: Only allow exact matches from provided options
         3. VOICE INTERRUPTION: Respect voice commands like "stop", "pause", "બંધ કરો", "રોકો"
         4. MULTILINGUAL VALIDATION: Provide error messages in user's preferred language
+        5. **FORM DATA MUST ALWAYS BE IN ENGLISH, EVEN IF USER SPEAKS GUJARATI**
         
         CONVERSATION MANAGEMENT:
         - Start with contextual greeting explaining the form

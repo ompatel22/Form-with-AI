@@ -421,6 +421,8 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Set language preference
         language = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
         conversation.set_language(language)
+        # The conversation object is the source of truth for the language, loaded from the session.
+        language = conversation.current_language
         
         # Handle voice interruption if detected
         if req.interruption_detected and req.message:

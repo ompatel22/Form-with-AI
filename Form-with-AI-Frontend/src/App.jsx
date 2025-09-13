@@ -11,8 +11,8 @@ function App() {
   const [inputText, setInputText] = useState("");
   const [status, setStatus] = useState("idle");
   const [pendingAudio, setPendingAudio] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [language, setLanguage] = useState("en"); // Current conversation language
+  const [isPlaying, setIsPlaying] = useState(false); // Current conversation language
+  const [language, setLanguage] = useState("en");
   
   // Dynamic form state only (no legacy)
   const [currentForm, setCurrentForm] = useState(null);
@@ -854,6 +854,7 @@ function App() {
     
     stopPhoneCallMode();
     
+    window.history.pushState({}, '', `/forms/${form.id}/fill`);
     setTimeout(() => dynamicBackendChat("", false), 200);
   };
 
@@ -928,6 +929,33 @@ function App() {
     }
   }, [currentForm]);
 
+  // Handle loading form directly from URL
+  useEffect(() => {
+    const path = window.location.pathname;
+    const match = path.match(/^\/forms\/(.+)\/fill$/);
+
+    if (match && match[1]) {
+      const formId = match[1];
+      const loadFormFromUrl = async (id) => {
+        try {
+          const response = await fetch(`${API}/forms/${id}`);
+          if (response.ok) {
+            const data = await response.json();
+            handleFormSelected(data.form);
+          } else {
+            alert('The requested form could not be found. Returning to the form manager.');
+            window.history.replaceState({}, document.title, "/");
+          }
+        } catch (error) {
+          console.error('Error loading form from URL:', error);
+          alert('There was an error loading the form.');
+          window.history.replaceState({}, document.title, "/");
+        }
+      };
+      loadFormFromUrl(formId);
+    }
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -965,14 +993,14 @@ function App() {
               ← Back to Forms
             </button>
             
-            {currentForm && (
+            {/* {currentForm && (
               <button
                 onClick={handleReset}
                 className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-500 transition-colors shadow-md"
               >
                 Reset Chat
               </button>
-            )}
+            )} */}
           </div>
           
           <div className="flex items-center justify-center gap-4 text-sm text-gray-300">
