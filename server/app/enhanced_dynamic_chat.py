@@ -434,18 +434,27 @@ class EnhancedDynamicFormConversation:
     def _initialize_conditional_fields(self, parent_field_name: str, selected_value: str):
         """Initialize conditional fields in session when triggered"""
         parent_field = next((f for f in self.form_schema.fields if f.name == parent_field_name), None)
-        if not parent_field:
+        if not parent_field or not parent_field.conditional_fields:
             return
         
-        conditional_fields = self._get_conditional_fields_for_value(parent_field, selected_value)
+        conditional_fields = parent_field.conditional_fields.get(selected_value, [])
         form_context_key = self._get_form_context_key()
         
-        for cf_data in conditional_fields:
-            field_key = f"{form_context_key}_{cf_data['name']}"
-            # Only initialize if not already exists
-            if field_key not in self.session.fields:
-                self.session.update_field(field_key, None, FieldStatus.PENDING)
-                logger.info(f"Initialized conditional field: {cf_data['name']} (triggered by {parent_field_name}={selected_value})")
+        # Clear any previously triggered conditional fields from this parent
+        for value, cf_list in parent_field.conditional_fields.items():
+            if value != selected_value:  # Clear fields from other values
+                for cf in cf_list:
+                    field_key = f"{form_context_key}_{cf.name}"
+                    if field_key in self.session.fields:
+                        del self.session.fields[field_key]
+                        logger.info(f"Cleared conditional field: {cf.name} (was for {parent_field_name}={value})")
+        
+        # Initialize new conditional fields
+        for cf in conditional_fields:
+            field_key = f"{form_context_key}_{cf.name}"
+            # Always reset conditional fields to ensure fresh start
+            self.session.update_field(field_key, None, FieldStatus.PENDING)
+            logger.info(f"Initialized conditional field: {cf.name} (triggered by {parent_field_name}={selected_value})")
 
     def get_next_field(self) -> Optional[FormField]:
         """Get the next field that needs to be filled, including conditional fields"""
@@ -513,21 +522,31 @@ class EnhancedDynamicFormConversation:
         new_language = language_support.detect_language_switch_command(user_text, self.current_language)
         if new_language:
             self.set_language(new_language)
-            
+
             # Generate appropriate language switch confirmation
             if new_language == Language.GUJARATI:
                 switch_message = "હા! હવે હું ગુજરાતીમાં વાત કરીશ. ચાલો આગળ વધીએ."
             else:
                 switch_message = "Yes! I'll now speak in English. Let's continue."
-            
+
+            # After switching, ask the next question
+            next_field = self.get_next_field()
+            next_question = ""
+            field_focus = None
+            if next_field:
+                next_question = self._generate_field_question_text(next_field)
+                field_focus = next_field.name
+
+            full_message = f"{switch_message} {next_question}".strip()
+
             return {
                 "action": "language_switch",
                 "updates": {},
-                "ask": switch_message,
-                "field_focus": None,
+                "ask": full_message,
+                "field_focus": field_focus,
                 "tone": "friendly",
                 "language": new_language.value,
-                "reply": switch_message
+                "reply": full_message
             }
         
         # Check for voice interruption commands
@@ -1047,38 +1066,48 @@ class EnhancedDynamicFormConversation:
             # Stop silence monitoring
             silence_manager.stop_session(self.session.session_id)
             
-        elif llm_response.get("action") == "set" and validated_updates:
-            # Move to next field with intelligent context
-            llm_response["field_focus"] = next_field.name
+        elif validated_updates:
+            # FIXED: Always move to next field when we have updates, regardless of LLM action
+            llm_response["action"] = "ask"  # Ensure we continue asking
+            llm_response["field_focus"] = next_field.name if next_field else None
             
-            # Generate appropriate response based on field type
-            if not llm_response.get("ask"):
-                if next_field.name in [cf for cf in conditional_fields_triggered]:
-                    # This is a conditional field
+            if next_field:
+                # Check if this is a conditional field that was just triggered
+                is_conditional_field = next_field.name in conditional_fields_triggered
+                
+                if is_conditional_field:
+                    # This is a conditional field - provide clear context
                     if self.current_language == Language.GUJARATI:
-                        conditional_intro = "હવે આ માહિતી જોઈએ:"
+                        conditional_intro = f"સારું! હવે '{next_field.label}' વિશે પૂછવા દો:"
                     else:
-                        conditional_intro = "Now I need this information:"
+                        conditional_intro = f"Great! Now let me ask about '{next_field.label}':"
                     
                     field_question = self._generate_field_question_text(next_field)
                     llm_response["ask"] = f"{conditional_intro} {field_question}"
                 else:
-                    llm_response["ask"] = self._generate_field_question_text(next_field)
+                    # Regular next field
+                    field_question = self._generate_field_question_text(next_field)
+                    if self.current_language == Language.GUJARATI:
+                        transition = "આગળ, "
+                    else:
+                        transition = "Next, "
+                    llm_response["ask"] = f"{transition}{field_question}"
                 
                 llm_response["reply"] = llm_response["ask"]
+                llm_response["tone"] = "friendly"
                 
-            # Update silence manager with new field context
-            silence_manager.start_silence_detection(
-                self.session.session_id,
-                self._silence_callback,
-                llm_response["ask"],
-                context={
-                    "field_name": next_field.name,
-                    "field_type": next_field.type.value,
-                    "awaiting_field_response": True,
-                    "is_conditional": next_field.name in conditional_fields_triggered
-                }
-            )
+                # Update silence manager with new field context
+                silence_manager.start_silence_detection(
+                    self.session.session_id,
+                    self._silence_callback,
+                    llm_response["ask"],
+                    context={
+                        "field_name": next_field.name,
+                        "field_type": next_field.type.value,
+                        "awaiting_field_response": True,
+                        "is_conditional": is_conditional_field
+                    }
+                )
         
         # Ensure reply is set
         if not llm_response.get("reply"):
@@ -1364,11 +1393,15 @@ class EnhancedDynamicFormConversation:
         return field_translations.get(field.name, f"{field.label} શું છે?")
     
     def _silence_callback(self, session_id: str, prompt_message: str, language: Language):
-        """Callback for silence manager prompts"""
-        # This would typically trigger TTS or send message to frontend
-        logger.info(f"Silence prompt for {session_id}: {prompt_message}")
+        """Callback for silence manager prompts - repeats questions after timeout"""
+        logger.info(f"🔄 Silence prompt for {session_id}: {prompt_message}")
         
-        # Add system message for silence prompt
+        # Add system message for silence prompt  
+        self.session.add_message(MessageRole.SYSTEM, f"Silence prompt: {prompt_message}")
+        
+        # This callback is triggered by the silence manager when user doesn't respond
+        # The silence manager should be integrated with the main chat flow to repeat questions
+        # For now, log the prompt - the frontend will handle the actual TTS via the /silence-prompt endpoint
         self.session.add_message(MessageRole.SYSTEM, f"Silence prompt: {prompt_message}")
     
     def _rate_limit(self):
