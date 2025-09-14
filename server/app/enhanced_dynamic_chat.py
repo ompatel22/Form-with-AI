@@ -924,12 +924,41 @@ class EnhancedDynamicFormConversation:
         
         return None
     
+    def _find_field_schema(self, field_name: str) -> Optional[FormField]:
+        """Find field schema including conditional fields"""
+        # First check main form fields
+        for field in self.form_schema.fields:
+            if field.name == field_name:
+                return field
+        
+        # Then check conditional fields
+        for field in self.form_schema.fields:
+            if field.conditional_fields:
+                for value, conditional_fields in field.conditional_fields.items():
+                    for cf in conditional_fields:
+                        if cf.name == field_name:
+                            # Return a FormField object for the conditional field
+                            return FormField(
+                                id=cf.id,
+                                name=cf.name,
+                                type=cf.type,
+                                label=cf.label,
+                                description=cf.description,
+                                validation=cf.validation,
+                                order=cf.order,
+                                options=getattr(cf, 'options', None)
+                            )
+        
+        return None
+
     def _build_llm_context(self, user_input: str, current_field: Optional[FormField]) -> Dict[str, Any]:
-        """Build comprehensive context for LLM"""
+        """Build comprehensive context for LLM including conditional fields"""
         form_context_key = self._get_form_context_key()
         
-        # Get current field states
+        # Get current field states - include both main fields and conditional fields
         field_states = {}
+        
+        # Process main form fields
         for field in self.form_schema.fields:
             field_key = self._get_field_key(field.name)
             field_state = self.session.fields.get(field_key)
@@ -942,8 +971,38 @@ class EnhancedDynamicFormConversation:
                 "description": field.description,
                 "current_value": field_state.value if field_state else None,
                 "status": field_state.status.value if field_state else "pending",
-                "attempts": field_state.attempt_count if field_state else 0
+                "attempts": field_state.attempt_count if field_state else 0,
+                "is_conditional": False
             }
+        
+        # Process conditional fields that have been triggered
+        for field in self.form_schema.fields:
+            if field.conditional_fields:
+                field_key = self._get_field_key(field.name)
+                field_state = self.session.fields.get(field_key)
+                
+                # If this field has a value, check what conditional fields it triggers
+                if field_state and field_state.value and field_state.value in field.conditional_fields:
+                    conditional_fields = field.conditional_fields[field_state.value]
+                    
+                    for cf in conditional_fields:
+                        cf_field_key = self._get_field_key(cf.name)
+                        cf_field_state = self.session.fields.get(cf_field_key)
+                        
+                        # Add conditional field to field_states so LLM knows it exists
+                        field_states[cf.name] = {
+                            "type": cf.type.value,
+                            "label": cf.label,
+                            "required": cf.validation.required if hasattr(cf.validation, 'required') else False,
+                            "options": getattr(cf, 'options', []) or [],
+                            "description": getattr(cf, 'description', None),
+                            "current_value": cf_field_state.value if cf_field_state else None,
+                            "status": cf_field_state.status.value if cf_field_state else "pending",
+                            "attempts": cf_field_state.attempt_count if cf_field_state else 0,
+                            "is_conditional": True,
+                            "parent_field": field.name,
+                            "parent_value": field_state.value
+                        }
         
         return {
             "form_info": {
@@ -1001,7 +1060,7 @@ class EnhancedDynamicFormConversation:
         # Validate each field update
         for field_name, value in updates.items():
             if value is not None and str(value).strip():
-                field_schema = next((f for f in self.form_schema.fields if f.name == field_name), None)
+                field_schema = self._find_field_schema(field_name)
                 
                 if field_schema:
                     validation_result = self._validate_field_value(field_schema, str(value))
@@ -1011,15 +1070,16 @@ class EnhancedDynamicFormConversation:
                         field_key = self._get_field_key(field_name)
                         self.session.update_field(field_key, validation_result.cleaned_value, FieldStatus.COLLECTED)
                         
-                        # Check if this field triggers conditional fields
-                        if (field_schema.conditional_fields and 
-                            validation_result.cleaned_value in field_schema.conditional_fields):
+                        # Check if this field triggers conditional fields (only for main fields)
+                        main_field_schema = next((f for f in self.form_schema.fields if f.name == field_name), None)
+                        if (main_field_schema and main_field_schema.conditional_fields and 
+                            validation_result.cleaned_value in main_field_schema.conditional_fields):
                             
                             # Initialize conditional fields
                             self._initialize_conditional_fields(field_name, validation_result.cleaned_value)
                             
                             # Get conditional field names for response
-                            conditional_fields = field_schema.conditional_fields[validation_result.cleaned_value]
+                            conditional_fields = main_field_schema.conditional_fields[validation_result.cleaned_value]
                             conditional_fields_triggered = [cf.name for cf in conditional_fields]
                             
                             logger.info(f"Conditional fields triggered by {field_name}={validation_result.cleaned_value}: {conditional_fields_triggered}")
@@ -1028,6 +1088,8 @@ class EnhancedDynamicFormConversation:
                             "error": validation_result.error_message,
                             "suggestion": validation_result.suggestion
                         }
+                else:
+                    logger.warning(f"Field schema not found for field: {field_name}")
         
         # Handle validation errors
         if validation_errors:
