@@ -334,6 +334,40 @@ def reset_session(session_id: str = Query("session1", min_length=1)):
             detail="Failed to reset session"
         )
 
+@app.delete("/sessions/{session_id}")
+def cleanup_session(session_id: str):
+    """Clean up and completely remove a session"""
+    try:
+        # Stop any silence monitoring for this session
+        silence_manager.stop_session(session_id)
+        
+        # Delete the session from memory store
+        success = memory_store.delete_session(session_id)
+        
+        if success:
+            logger.info(f"Session {session_id} cleaned up successfully")
+            return {
+                "status": "success",
+                "message": "Session cleaned up successfully",
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            logger.warning(f"Session {session_id} not found for cleanup")
+            return {
+                "status": "not_found",
+                "message": "Session not found",
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        
+    except Exception as e:
+        logger.error(f"Failed to cleanup session {session_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cleanup session"
+        )
+
 @app.get("/session/{session_id}/info", response_model=SessionInfoResponse)
 def get_session_info(session_id: str):
     """Get detailed session information"""

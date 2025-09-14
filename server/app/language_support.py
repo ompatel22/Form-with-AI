@@ -153,7 +153,8 @@ class LanguageSupport:
             "change to english", "switch to english", "english please",
             "speak english", "talk in english", "use english",
             
-            # Natural variations  
+            # Natural variations & phonetic
+            "સ્વીચ ટુ ઇંગ્લિશ",
             "અંગ્રેજીમાં કહો", "અંગ્રેજી ભાષામાં", "english kaho", "english ma kaho",
             "મને અંગ્રેજી જોઈએ", "i want english", "can you speak english"
         ]

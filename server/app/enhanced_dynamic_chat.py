@@ -513,21 +513,31 @@ class EnhancedDynamicFormConversation:
         new_language = language_support.detect_language_switch_command(user_text, self.current_language)
         if new_language:
             self.set_language(new_language)
-            
+
             # Generate appropriate language switch confirmation
             if new_language == Language.GUJARATI:
                 switch_message = "હા! હવે હું ગુજરાતીમાં વાત કરીશ. ચાલો આગળ વધીએ."
             else:
                 switch_message = "Yes! I'll now speak in English. Let's continue."
-            
+
+            # After switching, ask the next question
+            next_field = self.get_next_field()
+            next_question = ""
+            field_focus = None
+            if next_field:
+                next_question = self._generate_field_question_text(next_field)
+                field_focus = next_field.name
+
+            full_message = f"{switch_message} {next_question}".strip()
+
             return {
                 "action": "language_switch",
                 "updates": {},
-                "ask": switch_message,
-                "field_focus": None,
+                "ask": full_message,
+                "field_focus": field_focus,
                 "tone": "friendly",
                 "language": new_language.value,
-                "reply": switch_message
+                "reply": full_message
             }
         
         # Check for voice interruption commands
