@@ -299,23 +299,42 @@ class EnhancedDynamicFormConversation:
         3. VOICE INTERRUPTION: Respect voice commands like "stop", "pause", "બંધ કરો", "રોકો"
         4. MULTILINGUAL VALIDATION: Provide error messages in user's preferred language
         5. **FORM DATA MUST ALWAYS BE IN ENGLISH, EVEN IF USER SPEAKS GUJARATI**
+        6. **FIELD CORRECTION DETECTION**: Detect when user is correcting previously filled fields
+        7. **CONDITIONAL FIELD HANDLING**: When radio buttons change, ask about new conditional fields
+        8. **SMART FIELD TRACKING**: Always update fields when user provides corrections
         
         CONVERSATION MANAGEMENT:
-        - Start with contextual greeting explaining the form
+        - Start with contextual greeting explaining the form purpose and fields to be collected
         - Ask for ONE field at a time
         - Handle corrections and language switches immediately
         - Support both required and optional fields
         - Provide helpful error messages in appropriate language
+        - Detect field corrections and update immediately
+        - Handle conditional fields appearing based on selections
+        
+        CORRECTION DETECTION RULES:
+        - Look for correction phrases: "મારું નામ ખોટું છે", "wrong name", "correction", "change my", "મારા નામમાં ભૂલ છે"
+        - When user repeats field info for already filled fields, treat as correction
+        - Always prioritize recent input over previous values
+        - Ask for confirmation before updating critical fields
+        
+        CONDITIONAL FIELD RULES:
+        - When user selects radio option that triggers conditional fields, immediately queue those fields
+        - Ask conditional fields right after the triggering field is completed
+        - Maintain order: main field → conditional fields → next main field
+        - Show which conditional path was selected for clarity
         
         RESPONSE FORMAT (JSON ONLY):
         {{
-          "action": "ask" | "set" | "done" | "clarify" | "correct" | "remove" | "language_switch",
+          "action": "ask" | "set" | "done" | "clarify" | "correct" | "remove" | "language_switch" | "conditional_trigger",
           "updates": {{"field_name": "cleaned_value or null if removed"}},
           "ask": "Your natural response in appropriate language",
           "field_focus": "current_field_name",
-          "tone": "friendly" | "encouraging" | "apologetic" | "professional",
+          "tone": "friendly" | "encouraging" | "apologetic" | "professional" | "confirmation",
           "language": "en" | "gu",
-          "greeting": "Initial greeting if starting conversation"
+          "greeting": "Initial greeting if starting conversation",
+          "correction_detected": "Boolean if user is correcting a field",
+          "conditional_fields_triggered": "List of new conditional field names if any"
         }}
         
         Remember: Be conversational, culturally aware, and make the form-filling experience pleasant in both languages!
@@ -333,8 +352,106 @@ class EnhancedDynamicFormConversation:
         
         logger.info(f"Language set to {language.value} for session {self.session.session_id}")
     
+    def _detect_field_correction(self, user_text: str) -> Optional[str]:
+        """Detect if user is trying to correct a previously filled field"""
+        correction_patterns = {
+            Language.ENGLISH: [
+                r"my (.+?) is wrong", r"wrong (.+?)", r"change my (.+?)", r"correct my (.+?)",
+                r"my (.+?) should be", r"actually my (.+?) is", r"mistake in (.+?)",
+                r"error in (.+?)", r"fix my (.+?)", r"update my (.+?)"
+            ],
+            Language.GUJARATI: [
+                r"મારું (.+?) ખોટું છે", r"મારા (.+?)માં ભૂલ છે", r"મારું (.+?) બદલો",
+                r"મારું (.+?) સુધારો", r"મારું (.+?) ખરાબ છે", r"ભૂલ છે (.+?)માં"
+            ]
+        }
+        
+        patterns = correction_patterns.get(self.current_language, correction_patterns[Language.ENGLISH])
+        
+        for pattern in patterns:
+            match = re.search(pattern, user_text, re.IGNORECASE)
+            if match:
+                field_mention = match.group(1).lower()
+                
+                # Check if mentioned field exists and is already filled
+                for field in self.form_schema.fields:
+                    if (field_mention in field.name.lower() or 
+                        field_mention in field.label.lower() or
+                        (field_mention == "name" and "name" in field.name.lower()) or
+                        (field_mention == "નામ" and "name" in field.name.lower()) or
+                        (field_mention == "email" and field.type == FieldType.EMAIL) or
+                        (field_mention == "ઈમેઇલ" and field.type == FieldType.EMAIL)):
+                        
+                        field_key = self._get_field_key(field.name)
+                        field_state = self.session.fields.get(field_key)
+                        
+                        if field_state and field_state.status == FieldStatus.COLLECTED:
+                            return field.name
+        
+        # Also check if user is providing info for already filled fields
+        for field in self.form_schema.fields:
+            field_key = self._get_field_key(field.name)
+            field_state = self.session.fields.get(field_key)
+            
+            if field_state and field_state.status == FieldStatus.COLLECTED:
+                # Check for field-specific patterns
+                if field.type == FieldType.SHORT_ANSWER and "name" in field.name.lower():
+                    name_patterns = [r"મારું નામ (.+?) છે", r"my name is (.+?)"]
+                    for pattern in name_patterns:
+                        if re.search(pattern, user_text, re.IGNORECASE):
+                            return field.name
+                elif field.type == FieldType.EMAIL:
+                    email_patterns = [r"મારું ઈમેઇલ (.+?) છે", r"my email is (.+?)"]
+                    for pattern in email_patterns:
+                        if re.search(pattern, user_text, re.IGNORECASE):
+                            return field.name
+        
+        return None
+
+    def _get_conditional_fields_for_value(self, parent_field: FormField, selected_value: str) -> List[Dict[str, Any]]:
+        """Get conditional fields that should appear for a selected value"""
+        if not parent_field.conditional_fields:
+            return []
+        
+        conditional_fields = parent_field.conditional_fields.get(selected_value, [])
+        
+        # Convert to proper format for processing
+        fields_to_add = []
+        for cf in conditional_fields:
+            fields_to_add.append({
+                "name": cf.name,
+                "type": cf.type,
+                "label": cf.label,
+                "description": cf.description,
+                "validation": cf.validation.__dict__ if hasattr(cf.validation, '__dict__') else {"required": cf.validation.required if hasattr(cf.validation, 'required') else False},
+                "order": cf.order,
+                "parent_field": parent_field.name,
+                "parent_value": selected_value
+            })
+        
+        return fields_to_add
+
+    def _initialize_conditional_fields(self, parent_field_name: str, selected_value: str):
+        """Initialize conditional fields in session when triggered"""
+        parent_field = next((f for f in self.form_schema.fields if f.name == parent_field_name), None)
+        if not parent_field:
+            return
+        
+        conditional_fields = self._get_conditional_fields_for_value(parent_field, selected_value)
+        form_context_key = self._get_form_context_key()
+        
+        for cf_data in conditional_fields:
+            field_key = f"{form_context_key}_{cf_data['name']}"
+            # Only initialize if not already exists
+            if field_key not in self.session.fields:
+                self.session.update_field(field_key, None, FieldStatus.PENDING)
+                logger.info(f"Initialized conditional field: {cf_data['name']} (triggered by {parent_field_name}={selected_value})")
+
     def get_next_field(self) -> Optional[FormField]:
-        """Get the next field that needs to be filled"""
+        """Get the next field that needs to be filled, including conditional fields"""
+        form_context_key = self._get_form_context_key()
+        
+        # First, check main form fields in order
         sorted_fields = sorted(self.form_schema.fields, key=lambda f: f.order)
         
         for field in sorted_fields:
@@ -343,6 +460,31 @@ class EnhancedDynamicFormConversation:
             
             if not field_info or field_info.status in [FieldStatus.PENDING, FieldStatus.INVALID]:
                 return field
+            
+            # If this field has conditional fields, check if we need to ask them
+            if (field.conditional_fields and 
+                field_info.status == FieldStatus.COLLECTED and 
+                field_info.value):
+                
+                conditional_fields = field.conditional_fields.get(field_info.value, [])
+                
+                for cf in conditional_fields:
+                    cf_field_key = f"{form_context_key}_{cf.name}"
+                    cf_field_info = self.session.fields.get(cf_field_key, None)
+                    
+                    if not cf_field_info or cf_field_info.status in [FieldStatus.PENDING, FieldStatus.INVALID]:
+                        # Return conditional field as next field to ask
+                        # Create a temporary FormField object for conditional field
+                        temp_field = FormField(
+                            id=cf.id,
+                            name=cf.name,
+                            type=cf.type,
+                            label=cf.label,
+                            description=cf.description,
+                            validation=cf.validation,
+                            order=cf.order
+                        )
+                        return temp_field
         
         return None
     
@@ -501,7 +643,8 @@ class EnhancedDynamicFormConversation:
             greeting = language_support.generate_initial_greeting(
                 self.form_schema.title,
                 self.form_schema.description or "",
-                self.current_language
+                self.current_language,
+                self.form_schema.fields
             )
             
             first_field = self.get_next_field()
@@ -542,6 +685,34 @@ class EnhancedDynamicFormConversation:
     def _process_normal_input(self, user_text: str) -> Dict[str, Any]:
         """Process normal conversational input"""
         try:
+            # First check if this is a field correction
+            correction_field = self._detect_field_correction(user_text)
+            
+            if correction_field:
+                logger.info(f"Field correction detected for: {correction_field}")
+                
+                # Build context specifically for correction
+                context = self._build_correction_context(user_text, correction_field)
+                
+                # Get LLM response for correction
+                self._rate_limit()
+                response = self.model.generate_content(
+                    json.dumps(context, indent=2),
+                    generation_config={
+                        "temperature": 0.2,  # Lower temperature for corrections
+                        "top_p": 0.8,
+                        "max_output_tokens": 1024
+                    }
+                )
+                
+                if response and response.text:
+                    llm_response = self._parse_llm_response(response.text)
+                    llm_response["correction_detected"] = True
+                    
+                    # Process the correction
+                    return self._process_field_correction(llm_response, correction_field, user_text)
+            
+            # Normal processing
             current_field = self.get_next_field()
             
             # Build context for LLM
@@ -574,11 +745,165 @@ class EnhancedDynamicFormConversation:
                 "action": "error",
                 "updates": {},
                 "ask": error_msg,
-                "field_focus": current_field.name if current_field else None,
+                "field_focus": current_field.name if 'current_field' in locals() and current_field else None,
                 "tone": "apologetic",
                 "language": self.current_language.value,
                 "reply": error_msg
             }
+
+    def _build_correction_context(self, user_input: str, field_name: str) -> Dict[str, Any]:
+        """Build context specifically for field correction"""
+        form_context_key = self._get_form_context_key()
+        
+        # Get the field being corrected
+        target_field = next((f for f in self.form_schema.fields if f.name == field_name), None)
+        if not target_field:
+            return self._build_llm_context(user_input, None)
+        
+        field_key = self._get_field_key(field_name)
+        current_value = self.session.fields.get(field_key, {}).value if field_key in self.session.fields else None
+        
+        return {
+            "correction_mode": True,
+            "target_field": {
+                "name": target_field.name,
+                "type": target_field.type.value,
+                "label": target_field.label,
+                "current_value": current_value
+            },
+            "user_correction": user_input,
+            "language": self.current_language.value,
+            "form_info": {
+                "title": self.form_schema.title,
+                "description": self.form_schema.description
+            },
+            "instructions": f"User is correcting the field '{field_name}'. Extract the new correct value from their input and update it. Acknowledge the correction politely."
+        }
+
+    def _process_field_correction(self, llm_response: Dict[str, Any], field_name: str, user_text: str) -> Dict[str, Any]:
+        """Process a field correction"""
+        try:
+            # Extract new value from user input using field-specific logic
+            field_schema = next((f for f in self.form_schema.fields if f.name == field_name), None)
+            if not field_schema:
+                return llm_response
+            
+            # Try to extract the corrected value
+            corrected_value = self._extract_corrected_value(user_text, field_schema)
+            
+            if corrected_value:
+                # Validate the corrected value
+                validation_result = self._validate_field_value(field_schema, corrected_value)
+                
+                if validation_result.is_valid:
+                    # Update the field
+                    field_key = self._get_field_key(field_name)
+                    self.session.update_field(field_key, validation_result.cleaned_value, FieldStatus.COLLECTED)
+                    
+                    # Generate confirmation message
+                    if self.current_language == Language.GUJARATI:
+                        confirmation = f"સુધાર્યું! તમારું {field_schema.label} હવે '{validation_result.cleaned_value}' તરીકે નોંધાયું છે."
+                    else:
+                        confirmation = f"Corrected! Your {field_schema.label} is now recorded as '{validation_result.cleaned_value}'."
+                    
+                    # Continue with next field
+                    next_field = self.get_next_field()
+                    if next_field:
+                        next_question = self._generate_field_question_text(next_field)
+                        full_message = f"{confirmation} {next_question}"
+                        
+                        return {
+                            "action": "correct",
+                            "updates": {field_name: validation_result.cleaned_value},
+                            "ask": full_message,
+                            "field_focus": next_field.name,
+                            "tone": "confirmation",
+                            "language": self.current_language.value,
+                            "reply": full_message,
+                            "correction_detected": True
+                        }
+                    else:
+                        done_msg = f"{confirmation} બધું પૂર્ણ!" if self.current_language == Language.GUJARATI else f"{confirmation} All done!"
+                        return {
+                            "action": "done",
+                            "updates": {field_name: validation_result.cleaned_value},
+                            "ask": done_msg,
+                            "field_focus": None,
+                            "tone": "success",
+                            "language": self.current_language.value,
+                            "reply": done_msg,
+                            "correction_detected": True
+                        }
+                else:
+                    # Validation failed
+                    error_msg = f"{validation_result.error_message} {validation_result.suggestion}"
+                    return {
+                        "action": "ask",
+                        "updates": {},
+                        "ask": error_msg,
+                        "field_focus": field_name,
+                        "tone": "helpful",
+                        "language": self.current_language.value,
+                        "reply": error_msg,
+                        "correction_detected": True
+                    }
+            
+            # If we couldn't extract the value, ask for clarification
+            clarify_msg = "માફ કરશો, મને સાચી માહિતી સમજાઈ નથી. કૃપા કરીને ફરીથી કહો." if self.current_language == Language.GUJARATI else "Sorry, I didn't understand the correct information. Please tell me again."
+            
+            return {
+                "action": "clarify",
+                "updates": {},
+                "ask": clarify_msg,
+                "field_focus": field_name,
+                "tone": "apologetic",
+                "language": self.current_language.value,
+                "reply": clarify_msg,
+                "correction_detected": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Field correction processing failed: {e}")
+            return llm_response
+
+    def _extract_corrected_value(self, user_text: str, field: FormField) -> Optional[str]:
+        """Extract corrected value from user input based on field type"""
+        if field.type == FieldType.SHORT_ANSWER and "name" in field.name.lower():
+            # Extract name patterns
+            patterns = [
+                r"મારું નામ (.+?) છે",
+                r"my name is (.+?)$",
+                r"call me (.+?)$",
+                r"નામ (.+?) છે",
+                r"name (.+?)$"
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, user_text, re.IGNORECASE)
+                if match:
+                    return match.group(1).strip()
+        
+        elif field.type == FieldType.EMAIL:
+            # Extract email patterns  
+            email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+            match = re.search(email_pattern, user_text)
+            if match:
+                return match.group(0)
+        
+        elif field.type == FieldType.PHONE:
+            # Extract phone patterns - digits only
+            digits = re.findall(r'\d+', user_text)
+            if digits:
+                return ''.join(digits)
+        
+        elif field.type in [FieldType.MULTIPLE_CHOICE, FieldType.DROPDOWN]:
+            # Try to match with available options
+            if field.options:
+                for option in field.options:
+                    if option.lower() in user_text.lower():
+                        return option
+        
+        return None
     
     def _build_llm_context(self, user_input: str, current_field: Optional[FormField]) -> Dict[str, Any]:
         """Build comprehensive context for LLM"""
@@ -652,6 +977,7 @@ class EnhancedDynamicFormConversation:
         updates = llm_response.get("updates", {})
         validated_updates = {}
         validation_errors = {}
+        conditional_fields_triggered = []
         
         # Validate each field update
         for field_name, value in updates.items():
@@ -665,6 +991,19 @@ class EnhancedDynamicFormConversation:
                         validated_updates[field_name] = validation_result.cleaned_value
                         field_key = self._get_field_key(field_name)
                         self.session.update_field(field_key, validation_result.cleaned_value, FieldStatus.COLLECTED)
+                        
+                        # Check if this field triggers conditional fields
+                        if (field_schema.conditional_fields and 
+                            validation_result.cleaned_value in field_schema.conditional_fields):
+                            
+                            # Initialize conditional fields
+                            self._initialize_conditional_fields(field_name, validation_result.cleaned_value)
+                            
+                            # Get conditional field names for response
+                            conditional_fields = field_schema.conditional_fields[validation_result.cleaned_value]
+                            conditional_fields_triggered = [cf.name for cf in conditional_fields]
+                            
+                            logger.info(f"Conditional fields triggered by {field_name}={validation_result.cleaned_value}: {conditional_fields_triggered}")
                     else:
                         validation_errors[field_name] = {
                             "error": validation_result.error_message,
@@ -690,6 +1029,9 @@ class EnhancedDynamicFormConversation:
         llm_response["updates"] = validated_updates
         llm_response["language"] = self.current_language.value
         
+        if conditional_fields_triggered:
+            llm_response["conditional_fields_triggered"] = conditional_fields_triggered
+        
         # Check if form is complete
         next_field = self.get_next_field()
         if next_field is None:
@@ -708,8 +1050,21 @@ class EnhancedDynamicFormConversation:
         elif llm_response.get("action") == "set" and validated_updates:
             # Move to next field with intelligent context
             llm_response["field_focus"] = next_field.name
+            
+            # Generate appropriate response based on field type
             if not llm_response.get("ask"):
-                llm_response["ask"] = self._generate_field_question_text(next_field)
+                if next_field.name in [cf for cf in conditional_fields_triggered]:
+                    # This is a conditional field
+                    if self.current_language == Language.GUJARATI:
+                        conditional_intro = "હવે આ માહિતી જોઈએ:"
+                    else:
+                        conditional_intro = "Now I need this information:"
+                    
+                    field_question = self._generate_field_question_text(next_field)
+                    llm_response["ask"] = f"{conditional_intro} {field_question}"
+                else:
+                    llm_response["ask"] = self._generate_field_question_text(next_field)
+                
                 llm_response["reply"] = llm_response["ask"]
                 
             # Update silence manager with new field context
@@ -720,7 +1075,8 @@ class EnhancedDynamicFormConversation:
                 context={
                     "field_name": next_field.name,
                     "field_type": next_field.type.value,
-                    "awaiting_field_response": True
+                    "awaiting_field_response": True,
+                    "is_conditional": next_field.name in conditional_fields_triggered
                 }
             )
         
@@ -731,32 +1087,215 @@ class EnhancedDynamicFormConversation:
         return llm_response
     
     def _validate_field_value(self, field: FormField, value: str) -> ValidationResult:
-        """Validate field value using enhanced validators"""
+        """Validate field value using enhanced validators with Gujarati to English conversion"""
+        
+        # If user spoke in Gujarati but field needs English value, translate first
+        english_value = value
+        if self.current_language == Language.GUJARATI and self._contains_gujarati_text(value):
+            try:
+                english_value = self._translate_gujarati_to_english(value)
+                logger.info(f"Translated Gujarati '{value}' to English '{english_value}' for form field")
+            except Exception as e:
+                logger.warning(f"Failed to translate Gujarati to English: {e}")
+                # Continue with original value if translation fails
+        
         if field.type == FieldType.SHORT_ANSWER and 'name' in field.name.lower():
-            return self.validator.validate_full_name(value, self.current_language)
+            return self.validator.validate_full_name(english_value, self.current_language)
         elif field.type == FieldType.EMAIL:
-            return self.validator.validate_email(value, self.current_language)
+            return self.validator.validate_email(english_value, self.current_language)
         elif field.type == FieldType.PHONE:
-            return self.validator.validate_phone(value, self.current_language)
+            return self.validator.validate_phone(english_value, self.current_language)
         elif field.type == FieldType.DATE:
-            return self.validator.validate_date(value, self.current_language)
+            return self.validator.validate_date(english_value, self.current_language)
         elif field.type in [FieldType.MULTIPLE_CHOICE, FieldType.DROPDOWN]:
-            # Strict option matching for checkboxes/dropdowns
-            if field.options and value not in field.options:
+            # For choice fields, try to match English options even if user spoke in Gujarati
+            if field.options:
+                # First try exact match with cleaned value
+                cleaned_value = english_value.strip()
+                if cleaned_value in field.options:
+                    return ValidationResult(True, cleaned_value, "", "")
+                
+                # Try case-insensitive match
+                for option in field.options:
+                    if cleaned_value.lower() == option.lower():
+                        return ValidationResult(True, option, "", "")
+                
+                # If no exact match and we have Gujarati input, try intelligent mapping
+                if self.current_language == Language.GUJARATI:
+                    mapped_option = self._intelligent_option_mapping(value, field.options)
+                    if mapped_option:
+                        logger.info(f"Mapped Gujarati '{value}' to English option '{mapped_option}'")
+                        return ValidationResult(True, mapped_option, "", "")
+                
+                # Try partial matching for common cases
+                cleaned_lower = cleaned_value.lower()
+                for option in field.options:
+                    option_lower = option.lower()
+                    if (cleaned_lower in option_lower or option_lower in cleaned_lower or
+                        self._fuzzy_match(cleaned_lower, option_lower)):
+                        logger.info(f"Fuzzy matched '{value}' to option '{option}'")
+                        return ValidationResult(True, option, "", "")
+                
                 error_msg = "કૃપા કરીને ઉપલબ્ધ વિકલ્પોમાંથી પસંદ કરો" if self.current_language == Language.GUJARATI else "Please choose from the available options"
                 suggestion = f"ઉપલબ્ધ વિકલ્પો: {', '.join(field.options)}" if self.current_language == Language.GUJARATI else f"Available options: {', '.join(field.options)}"
                 return ValidationResult(False, "", error_msg, suggestion)
         elif field.type == FieldType.CHECKBOXES:
             # Handle multiple selections with strict validation
             if field.options:
-                selected = value.split(',') if isinstance(value, str) else [value]
-                invalid_options = [opt.strip() for opt in selected if opt.strip() not in field.options]
+                selected = english_value.split(',') if isinstance(english_value, str) else [english_value]
+                valid_selections = []
+                invalid_options = []
+                
+                for opt in selected:
+                    opt = opt.strip()
+                    if opt in field.options:
+                        valid_selections.append(opt)
+                    elif self.current_language == Language.GUJARATI and self._contains_gujarati_text(opt):
+                        # Try to map Gujarati option to English
+                        mapped_option = self._intelligent_option_mapping(opt, field.options)
+                        if mapped_option:
+                            valid_selections.append(mapped_option)
+                        else:
+                            invalid_options.append(opt)
+                    else:
+                        invalid_options.append(opt)
+                
                 if invalid_options:
                     error_msg = f"અમાન્ય વિકલ્પો: {', '.join(invalid_options)}" if self.current_language == Language.GUJARATI else f"Invalid options: {', '.join(invalid_options)}"
                     suggestion = f"ઉપલબ્ધ વિકલ્પો: {', '.join(field.options)}" if self.current_language == Language.GUJARATI else f"Available options: {', '.join(field.options)}"
                     return ValidationResult(False, "", error_msg, suggestion)
+                
+                # Return comma-separated valid selections in English
+                return ValidationResult(True, ', '.join(valid_selections), "", "")
         
-        return ValidationResult(True, value, "", "")
+        return ValidationResult(True, english_value, "", "")
+
+    def _fuzzy_match(self, text1: str, text2: str) -> bool:
+        """Simple fuzzy matching for option selection"""
+        # Check if either text contains the other (partial match)
+        return (text1 in text2 or text2 in text1) and len(text1) > 2 and len(text2) > 2
+
+    def _intelligent_option_mapping(self, gujarati_input: str, english_options: List[str]) -> Optional[str]:
+        """Intelligent mapping of Gujarati input to English options with domain knowledge"""
+        
+        # Common patient type mappings
+        gujarati_mappings = {
+            # Patient type mappings
+            "નવા દર્દી": "New Patient",
+            "નવો દર્દી": "New Patient", 
+            "નવા": "New Patient",
+            "નવો": "New Patient",
+            "નવું": "New Patient",
+            "જૂના દર્દી": "Existing Patient",
+            "જૂનો દર્દી": "Existing Patient",
+            "જૂના": "Existing Patient", 
+            "જૂનો": "Existing Patient",
+            "જૂનું": "Existing Patient",
+            "પહેલાના": "Existing Patient",
+            "પુરાના": "Existing Patient",
+            
+            # Yes/No mappings
+            "હા": "Yes",
+            "હાં": "Yes", 
+            "ના": "No",
+            "નહીં": "No",
+            
+            # Common response mappings
+            "ઉત્તમ": "Excellent",
+            "સારું": "Good",
+            "સામાન્ય": "Average",
+            "ખરાબ": "Poor"
+        }
+        
+        # Clean input text
+        cleaned_input = gujarati_input.strip().lower()
+        
+        # Check direct mappings first
+        for gujarati_phrase, english_equivalent in gujarati_mappings.items():
+            if gujarati_phrase.lower() in cleaned_input:
+                # Check if the English equivalent is in available options
+                for option in english_options:
+                    if english_equivalent.lower() == option.lower():
+                        return option
+        
+        # Check for keywords in input
+        input_words = cleaned_input.split()
+        for word in input_words:
+            for gujarati_phrase, english_equivalent in gujarati_mappings.items():
+                if word in gujarati_phrase.lower():
+                    for option in english_options:
+                        if english_equivalent.lower() == option.lower():
+                            return option
+        
+        # If no direct mapping, try AI-based translation
+        return self._map_gujarati_to_english_option(gujarati_input, english_options)
+
+    def _contains_gujarati_text(self, text: str) -> bool:
+        """Check if text contains Gujarati characters"""
+        return any('\u0A80' <= char <= '\u0AFF' for char in text)
+    
+    def _translate_gujarati_to_english(self, gujarati_text: str) -> str:
+        """Translate Gujarati text to English for form storage"""
+        try:
+            prompt = f"""
+            Translate the following Gujarati text to English. This is for form field storage, so provide a clean, natural English translation.
+            
+            Gujarati text: {gujarati_text}
+            
+            Return only the English translation, no explanations or additional text.
+            """
+            
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.1,
+                    "top_p": 0.8,
+                    "max_output_tokens": 200
+                }
+            )
+            
+            if response and response.text:
+                translation = response.text.strip()
+                # Clean up any artifacts
+                translation = re.sub(r'^Translation:\s*', '', translation, flags=re.IGNORECASE)
+                translation = re.sub(r'^English:\s*', '', translation, flags=re.IGNORECASE)
+                return translation
+            
+        except Exception as e:
+            logger.error(f"Translation failed: {e}")
+        
+        return gujarati_text  # Return original if translation fails
+    
+    def _map_gujarati_to_english_option(self, gujarati_option: str, english_options: List[str]) -> Optional[str]:
+        """Map a Gujarati option to the closest English option from the available choices"""
+        try:
+            prompt = f"""
+            Match the Gujarati option to the most appropriate English option from the list.
+            
+            Gujarati option: {gujarati_option}
+            Available English options: {', '.join(english_options)}
+            
+            Return only the exact matching English option from the list, or "NO_MATCH" if none match appropriately.
+            """
+            
+            response = self.model.generate_content(
+                prompt,
+                generation_config={
+                    "temperature": 0.1,
+                    "top_p": 0.8,
+                    "max_output_tokens": 50
+                }
+            )
+            
+            if response and response.text:
+                match = response.text.strip()
+                if match in english_options:
+                    return match
+                    
+        except Exception as e:
+            logger.error(f"Option mapping failed: {e}")
+        
+        return None
     
     def _generate_field_question_text(self, field: FormField) -> str:
         """Generate natural question text for a field in appropriate language"""

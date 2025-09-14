@@ -2,6 +2,7 @@
 # Node / Frontend (Vite, React)
 # ------------------------
 Form-with-AI-Frontend/node_modules/
+Form-with-AI-Frontend/.env/
 Form-with-AI-Frontend/dist/
 Form-with-AI-Frontend/.vite/
 Form-with-AI-Frontend/.env.local

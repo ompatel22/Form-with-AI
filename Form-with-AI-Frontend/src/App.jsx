@@ -4,7 +4,16 @@ import ChatSide from "./components/ChatSide.jsx";
 import FormManager from "./components/FormManager.jsx";
 import DynamicFormRenderer from "./components/DynamicFormRenderer.jsx";
 
-const API = "http://127.0.0.1:8000";
+const API = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+
+// Helper to bypass the ngrok browser warning page.
+const fetchWithNgrokHeader = (url, options = {}) => {
+  const headers = {
+    ...options.headers,
+    'ngrok-skip-browser-warning': 'true',
+  };
+  return fetch(url, { ...options, headers });
+};
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -424,7 +433,7 @@ function App() {
         requestBody.manual_form_data = formData;
       }
 
-      const res = await fetch(`${API}/dynamic-chat`, {
+      const res = await fetchWithNgrokHeader(`${API}/dynamic-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
@@ -806,7 +815,7 @@ function App() {
         responses: formData
       };
 
-      const res = await fetch(`${API}/forms/${currentForm.id}/submit`, {
+      const res = await fetchWithNgrokHeader(`${API}/forms/${currentForm.id}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(submissionData),
@@ -866,7 +875,9 @@ function App() {
     try {
       stopPhoneCallMode();
       
-      await fetch(`${API}/reset?session_id=${sessionId}`, { method: "POST" });
+      await fetchWithNgrokHeader(`${API}/reset?session_id=${sessionId}`, {
+        method: "POST",
+      });
 
       setMessages([]);
       setStatus("idle");
@@ -909,7 +920,9 @@ function App() {
       const startConversation = async () => {
         try {
           setStatus("initializing");
-          await fetch(`${API}/reset?session_id=${sessionId}`, { method: "POST" });
+          await fetchWithNgrokHeader(`${API}/reset?session_id=${sessionId}`, {
+            method: "POST",
+          });
           await dynamicBackendChat("", false);
         } catch (err) {
           console.error("Initialization error:", err);
@@ -938,7 +951,7 @@ function App() {
       const formId = match[1];
       const loadFormFromUrl = async (id) => {
         try {
-          const response = await fetch(`${API}/forms/${id}`);
+          const response = await fetchWithNgrokHeader(`${API}/forms/${id}`);
           if (response.ok) {
             const data = await response.json();
             handleFormSelected(data.form);
@@ -973,8 +986,8 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-4 md:p-8 font-inter antialiased">
-      <div className="max-w-7xl mx-auto">
+    <div className="h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-4 md:p-8 font-inter antialiased flex flex-col">
+      <div className="max-w-7xl mx-auto w-full flex flex-col flex-1 min-h-0">
         {/* Header with Dark Theme */}
         <div className="text-center mb-8">
           <h1 className="text-3xl md:text-4xl font-bold text-white mb-4 tracking-tight">
@@ -1045,14 +1058,16 @@ function App() {
         </div>
 
         {/* Main Content with Dark Theme */}
-        <div className="flex flex-col lg:flex-row gap-6 shadow-2xl rounded-2xl overflow-hidden bg-gray-800 border border-gray-700">
+        <div className="flex flex-col lg:flex-row gap-6 shadow-2xl rounded-2xl overflow-hidden bg-gray-800 border border-gray-700 flex-1 min-h-0">
           {currentForm ? (
-            <DynamicFormRenderer
-              formSchema={currentForm}
-              formData={formData}
-              onChange={updateDynamicFormData}
-              onSubmit={handleDynamicSubmit}
-            />
+            <div className="flex-1 overflow-y-auto">
+              <DynamicFormRenderer
+                formSchema={currentForm}
+                formData={formData}
+                onChange={updateDynamicFormData}
+                onSubmit={handleDynamicSubmit}
+              />
+            </div>
           ) : (
             <div className="flex-1 bg-gradient-to-b from-gray-700 to-gray-800 p-10 rounded-l-2xl flex items-center justify-center">
               <div className="text-center">

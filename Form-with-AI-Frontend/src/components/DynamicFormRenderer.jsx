@@ -1,6 +1,34 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function DynamicFormRenderer({ formSchema, formData, onChange, onSubmit }) {
+  const [visibleFields, setVisibleFields] = useState(new Set());
+
+  // Calculate which conditional fields should be visible
+  useEffect(() => {
+    const newVisibleFields = new Set();
+    
+    if (formSchema && formSchema.fields) {
+      formSchema.fields.forEach(field => {
+        // Add main fields
+        newVisibleFields.add(field.name);
+        
+        // Check conditional fields
+        if (field.conditional_fields && formData[field.name]) {
+          const selectedValue = formData[field.name];
+          const conditionalFieldsForValue = field.conditional_fields[selectedValue];
+          
+          if (conditionalFieldsForValue) {
+            conditionalFieldsForValue.forEach(conditionalField => {
+              newVisibleFields.add(conditionalField.name);
+            });
+          }
+        }
+      });
+    }
+    
+    setVisibleFields(newVisibleFields);
+  }, [formSchema, formData]);
+
   if (!formSchema || !formSchema.fields) {
     return (
       <div className="p-6 text-center text-gray-500">
@@ -289,6 +317,35 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
 
   // Sort fields by order
   const sortedFields = [...formSchema.fields].sort((a, b) => (a.order || 0) - (b.order || 0));
+  
+  // Get all fields including conditional ones
+  const getAllFields = () => {
+    const allFields = [];
+    
+    sortedFields.forEach(field => {
+      // Add main field
+      allFields.push(field);
+      
+      // Add conditional fields if they should be visible
+      if (field.conditional_fields && formData[field.name]) {
+        const selectedValue = formData[field.name];
+        const conditionalFieldsForValue = field.conditional_fields[selectedValue];
+        
+        if (conditionalFieldsForValue) {
+          conditionalFieldsForValue.forEach(conditionalField => {
+            allFields.push({
+              ...conditionalField,
+              isConditional: true,
+              parentField: field.name,
+              parentValue: selectedValue
+            });
+          });
+        }
+      }
+    });
+    
+    return allFields;
+  };
 
   return (
     <div className="flex-1 bg-gradient-to-b from-gray-700 to-gray-800 p-10 rounded-l-2xl">
@@ -302,8 +359,17 @@ export default function DynamicFormRenderer({ formSchema, formData, onChange, on
       </div>
       
       <form onSubmit={onSubmit} className="space-y-6">
-        {sortedFields.map((field) => (
-          <div key={field.id || field.name}>
+        {getAllFields().map((field) => (
+          <div 
+            key={field.id || field.name}
+            className={field.isConditional ? 'ml-6 pl-4 border-l-2 border-blue-500/30 bg-gray-700/30 rounded-r-lg p-4' : ''}
+          >
+            {field.isConditional && (
+              <div className="text-xs text-blue-400 mb-2 font-medium">
+                ↳ Shown because "{field.parentValue}" was selected
+              </div>
+            )}
+            
             <label className="block text-sm font-medium text-gray-200 mb-2">
               {field.label}
               {field.validation?.required && (

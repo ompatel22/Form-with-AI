@@ -22,6 +22,7 @@ export default function FormBuilder({ onClose, onFormCreated }) {
   const [formDescription, setFormDescription] = useState('');
   const [fields, setFields] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showConditionalBuilder, setShowConditionalBuilder] = useState(null); // fieldId for conditional builder
 
   const addField = (type) => {
     const newField = {
@@ -39,7 +40,8 @@ export default function FormBuilder({ onClose, onFormCreated }) {
       scale_min: type === 'linear_scale' ? 1 : null,
       scale_max: type === 'linear_scale' ? 5 : null,
       scale_min_label: type === 'linear_scale' ? 'Low' : null,
-      scale_max_label: type === 'linear_scale' ? 'High' : null
+      scale_max_label: type === 'linear_scale' ? 'High' : null,
+      conditional_fields: type === 'multiple_choice' || type === 'dropdown' ? {} : null
     };
     setFields([...fields, newField]);
   };
@@ -73,6 +75,47 @@ export default function FormBuilder({ onClose, onFormCreated }) {
     updateField(fieldId, { options: newOptions });
   };
 
+  const addConditionalField = (parentFieldId, optionValue) => {
+    const newConditionalField = {
+      id: Date.now().toString() + '_conditional',
+      name: `conditional_${Date.now()}`,
+      type: 'short_answer',
+      label: 'Conditional Field',
+      validation: { required: false },
+      order: 0
+    };
+
+    const parentField = fields.find(f => f.id === parentFieldId);
+    const updatedConditionalFields = { ...parentField.conditional_fields };
+    
+    if (!updatedConditionalFields[optionValue]) {
+      updatedConditionalFields[optionValue] = [];
+    }
+    
+    updatedConditionalFields[optionValue].push(newConditionalField);
+    updateField(parentFieldId, { conditional_fields: updatedConditionalFields });
+  };
+
+  const updateConditionalField = (parentFieldId, optionValue, conditionalFieldId, updates) => {
+    const parentField = fields.find(f => f.id === parentFieldId);
+    const updatedConditionalFields = { ...parentField.conditional_fields };
+    
+    updatedConditionalFields[optionValue] = updatedConditionalFields[optionValue].map(cf => 
+      cf.id === conditionalFieldId ? { ...cf, ...updates } : cf
+    );
+    
+    updateField(parentFieldId, { conditional_fields: updatedConditionalFields });
+  };
+
+  const removeConditionalField = (parentFieldId, optionValue, conditionalFieldId) => {
+    const parentField = fields.find(f => f.id === parentFieldId);
+    const updatedConditionalFields = { ...parentField.conditional_fields };
+    
+    updatedConditionalFields[optionValue] = updatedConditionalFields[optionValue].filter(cf => cf.id !== conditionalFieldId);
+    
+    updateField(parentFieldId, { conditional_fields: updatedConditionalFields });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formTitle.trim()) {
@@ -86,7 +129,8 @@ export default function FormBuilder({ onClose, onFormCreated }) {
 
     setIsSubmitting(true);
     try {
-      const response = await fetch('http://127.0.0.1:8000/forms', {
+      const API = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+      const response = await fetch(`${API}/forms`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -201,15 +245,15 @@ export default function FormBuilder({ onClose, onFormCreated }) {
           {/* Fields */}
           <div className="space-y-4 mb-6">
             {fields.map((field, index) => (
-              <div key={field.id} className="border border-gray-300 rounded-lg p-4">
+              <div key={field.id} className="border border-gray-600 bg-gray-700 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-4">
-                  <h4 className="font-semibold text-gray-800">
+                  <h4 className="font-semibold text-white">
                     {index + 1}. {FIELD_TYPES.find(t => t.value === field.type)?.label}
                   </h4>
                   <button
                     type="button"
                     onClick={() => removeField(field.id)}
-                    className="text-red-500 hover:text-red-700"
+                    className="text-red-400 hover:text-red-300"
                   >
                     Remove
                   </button>
@@ -217,31 +261,31 @@ export default function FormBuilder({ onClose, onFormCreated }) {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-gray-200 mb-1">
                       Field Name
                     </label>
                     <input
                       type="text"
                       value={field.name}
                       onChange={(e) => updateField(field.id, { name: e.target.value })}
-                      className="w-full p-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400"
+                      className="w-full p-2 border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-gray-200 mb-1">
                       Question Label
                     </label>
                     <input
                       type="text"
                       value={field.label}
                       onChange={(e) => updateField(field.id, { label: e.target.value })}
-                      className="w-full p-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400"
+                      className="w-full p-2 border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
                     />
                   </div>
                 </div>
 
                 <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-gray-200 mb-1">
                     Description/Help Text
                   </label>
                   <input
@@ -249,14 +293,14 @@ export default function FormBuilder({ onClose, onFormCreated }) {
                     value={field.description}
                     onChange={(e) => updateField(field.id, { description: e.target.value })}
                     placeholder="Optional description..."
-                    className="w-full p-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400"
+                    className="w-full p-2 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded focus:ring-1 focus:ring-blue-400"
                   />
                 </div>
 
                 {/* Options for choice fields */}
                 {(field.type === 'multiple_choice' || field.type === 'checkboxes' || field.type === 'dropdown') && (
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <label className="block text-sm font-medium text-gray-200 mb-2">
                       Options
                     </label>
                     {field.options?.map((option, optionIndex) => (
@@ -265,13 +309,13 @@ export default function FormBuilder({ onClose, onFormCreated }) {
                           type="text"
                           value={option}
                           onChange={(e) => updateOption(field.id, optionIndex, e.target.value)}
-                          className="flex-1 p-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400"
+                          className="flex-1 p-2 border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
                         />
                         {field.options.length > 1 && (
                           <button
                             type="button"
                             onClick={() => removeOption(field.id, optionIndex)}
-                            className="text-red-500 hover:text-red-700"
+                            className="text-red-400 hover:text-red-300"
                           >
                             ×
                           </button>
@@ -281,7 +325,7 @@ export default function FormBuilder({ onClose, onFormCreated }) {
                     <button
                       type="button"
                       onClick={() => addOption(field.id)}
-                      className="text-blue-500 hover:text-blue-700 text-sm"
+                      className="text-blue-400 hover:text-blue-300 text-sm"
                     >
                       + Add Option
                     </button>
@@ -292,41 +336,148 @@ export default function FormBuilder({ onClose, onFormCreated }) {
                 {field.type === 'linear_scale' && (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Min</label>
+                      <label className="block text-sm font-medium text-gray-200 mb-1">Min</label>
                       <input
                         type="number"
                         value={field.scale_min || 1}
                         onChange={(e) => updateField(field.id, { scale_min: parseInt(e.target.value) })}
-                        className="w-full p-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400"
+                        className="w-full p-2 border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Max</label>
+                      <label className="block text-sm font-medium text-gray-200 mb-1">Max</label>
                       <input
                         type="number"
                         value={field.scale_max || 5}
                         onChange={(e) => updateField(field.id, { scale_max: parseInt(e.target.value) })}
-                        className="w-full p-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400"
+                        className="w-full p-2 border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Min Label</label>
+                      <label className="block text-sm font-medium text-gray-200 mb-1">Min Label</label>
                       <input
                         type="text"
                         value={field.scale_min_label || ''}
                         onChange={(e) => updateField(field.id, { scale_min_label: e.target.value })}
-                        className="w-full p-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400"
+                        className="w-full p-2 border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
                       />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Max Label</label>
+                      <label className="block text-sm font-medium text-gray-200 mb-1">Max Label</label>
                       <input
                         type="text"
                         value={field.scale_max_label || ''}
                         onChange={(e) => updateField(field.id, { scale_max_label: e.target.value })}
-                        className="w-full p-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-400"
+                        className="w-full p-2 border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
                       />
                     </div>
+                  </div>
+                )}
+
+                {/* Conditional Fields for Multiple Choice and Dropdown */}
+                {(field.type === 'multiple_choice' || field.type === 'dropdown') && (
+                  <div className="mt-6 p-4 bg-gray-600 rounded-lg">
+                    <h5 className="font-semibold text-white mb-3 flex items-center gap-2">
+                      <span>🔀</span>
+                      Conditional Fields (Show different fields based on selection)
+                    </h5>
+                    
+                    {field.options?.map((option, optionIndex) => (
+                      <div key={optionIndex} className="mb-4 p-3 bg-gray-700 rounded border">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium text-gray-200">
+                            When "{option}" is selected:
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => addConditionalField(field.id, option)}
+                            className="text-blue-400 hover:text-blue-300 text-sm"
+                          >
+                            + Add Field
+                          </button>
+                        </div>
+                        
+                        {field.conditional_fields?.[option]?.map((conditionalField, cfIndex) => (
+                          <div key={conditionalField.id} className="mt-2 p-3 bg-gray-800 rounded border border-gray-600">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-xs text-gray-400">Conditional Field #{cfIndex + 1}</span>
+                              <button
+                                type="button"
+                                onClick={() => removeConditionalField(field.id, option, conditionalField.id)}
+                                className="text-red-400 hover:text-red-300 text-xs"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-medium text-gray-300 mb-1">
+                                  Field Type
+                                </label>
+                                <select
+                                  value={conditionalField.type}
+                                  onChange={(e) => updateConditionalField(field.id, option, conditionalField.id, { type: e.target.value })}
+                                  className="w-full p-2 text-xs border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
+                                >
+                                  <option value="short_answer">Short Answer</option>
+                                  <option value="paragraph">Paragraph</option>
+                                  <option value="email">Email</option>
+                                  <option value="phone">Phone</option>
+                                  <option value="number">Number</option>
+                                  <option value="date">Date</option>
+                                  <option value="time">Time</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-gray-300 mb-1">
+                                  Field Name
+                                </label>
+                                <input
+                                  type="text"
+                                  value={conditionalField.name}
+                                  onChange={(e) => updateConditionalField(field.id, option, conditionalField.id, { name: e.target.value })}
+                                  className="w-full p-2 text-xs border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
+                                />
+                              </div>
+                            </div>
+                            
+                            <div className="mt-2">
+                              <label className="block text-xs font-medium text-gray-300 mb-1">
+                                Label
+                              </label>
+                              <input
+                                type="text"
+                                value={conditionalField.label}
+                                onChange={(e) => updateConditionalField(field.id, option, conditionalField.id, { label: e.target.value })}
+                                className="w-full p-2 text-xs border border-gray-600 bg-gray-700 text-white rounded focus:ring-1 focus:ring-blue-400"
+                              />
+                            </div>
+                            
+                            <div className="mt-2 flex items-center">
+                              <input
+                                type="checkbox"
+                                id={`cf-required-${conditionalField.id}`}
+                                checked={conditionalField.validation?.required || false}
+                                onChange={(e) => updateConditionalField(field.id, option, conditionalField.id, { 
+                                  validation: { ...conditionalField.validation, required: e.target.checked }
+                                })}
+                                className="mr-2"
+                              />
+                              <label htmlFor={`cf-required-${conditionalField.id}`} className="text-xs text-gray-300">
+                                Required field
+                              </label>
+                            </div>
+                          </div>
+                        ))}
+                        
+                        {(!field.conditional_fields?.[option] || field.conditional_fields[option].length === 0) && (
+                          <div className="text-xs text-gray-400 italic mt-2">
+                            No conditional fields added yet. Click "Add Field" to add fields that show when this option is selected.
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
 
@@ -341,7 +492,7 @@ export default function FormBuilder({ onClose, onFormCreated }) {
                     })}
                     className="mr-2"
                   />
-                  <label htmlFor={`required-${field.id}`} className="text-sm text-gray-700">
+                  <label htmlFor={`required-${field.id}`} className="text-sm text-gray-200">
                     Required field
                   </label>
                 </div>
@@ -354,14 +505,14 @@ export default function FormBuilder({ onClose, onFormCreated }) {
             <button
               type="button"
               onClick={onClose}
-              className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+              className="px-6 py-2 border border-gray-600 bg-gray-700 text-gray-200 rounded-lg hover:bg-gray-600 transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
             >
               {isSubmitting ? 'Creating...' : 'Create Form'}
             </button>

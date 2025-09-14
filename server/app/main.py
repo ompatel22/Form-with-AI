@@ -118,15 +118,9 @@ app = FastAPI(
 # Enhanced CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-        "https://*.netlify.app",
-        "https://*.vercel.app"
-    ],
+    # Use regex to allow all subdomains for ngrok, vercel, and netlify, plus localhost on any port.
+    # This is more robust than simple wildcard matching for `allow_origins`.
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+|https://.+\.netlify\.app|https://.+\.vercel\.app|https://.+\.ngrok-free\.app",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],

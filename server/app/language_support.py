@@ -288,31 +288,49 @@ class LanguageSupport:
         text_lower = text.lower()
         return any(indicator in text_lower for indicator in gujarati_indicators)
     
-    def generate_initial_greeting(self, form_title: str, form_description: str, language: Language) -> str:
-        """Generate contextual initial greeting without meta text"""
+    def generate_initial_greeting(self, form_title: str, form_description: str, language: Language, form_fields: List = None) -> str:
+        """Generate contextual initial greeting with form overview"""
         try:
+            # Provide form context in the prompt
+            fields_info = ""
+            if form_fields:
+                field_names = [f.label for f in form_fields[:5]]  # First 5 fields
+                if language == Language.GUJARATI:
+                    fields_info = f"આ ફોર્મમાં આ માહિતી ભરવાની છે: {', '.join(field_names)}"
+                    if len(form_fields) > 5:
+                        fields_info += f" અને બીજી {len(form_fields) - 5} માહિતી."
+                else:
+                    fields_info = f"This form will collect: {', '.join(field_names)}"
+                    if len(form_fields) > 5:
+                        fields_info += f" and {len(form_fields) - 5} other details."
+            
             if language == Language.GUJARATI:
                 prompt = f"""
-                Generate a natural greeting in Gujarati for helping with a form titled "{form_title}".
-                Description: {form_description}
+                એક ગુજરાતી ફોર્મ ભરવાનો સહાયક તરીકે, "{form_title}" નામના ફોર્મ માટે આવકારદાયક સંદેશ બનાવો.
                 
-                Requirements:
-                - Use natural, conversational Gujarati
-                - Be warm and helpful
-                - Explain that you'll help fill the form
-                - Keep it concise
-                - NO meta text or references to "greeting message"
-                - Start directly with the greeting
+                ફોર્મનું વર્ણન: {form_description}
+                {fields_info}
+                
+                આવશ્યકતાઓ:
+                - ગુજરાતીમાં ગરમજોશીથી સ્વાગત કરો
+                - ફોર્મનો હેતુ સમજાવો
+                - કેવી રીતે હું મદદ કરીશ તે જણાવો
+                - સંક્ષિપ્ત અને મિત્રતાપૂર્ણ રાખો
+                - કોઈ મેટા ટેક્સટ નહીં
+                - સીધું શુભેચ્છા સંદેશથી શરૂ કરો
                 """
             else:
                 prompt = f"""
-                Generate a natural greeting in English for helping with a form titled "{form_title}".
-                Description: {form_description}
+                Create a welcoming greeting for the form "{form_title}" as a helpful form assistant.
+                
+                Form description: {form_description}
+                {fields_info}
                 
                 Requirements:
-                - Be warm and helpful
-                - Explain that you'll help fill the form
-                - Keep it concise
+                - Be warm and welcoming
+                - Explain what the form is for
+                - Explain how I'll help them fill it out
+                - Keep it concise and friendly
                 - NO meta text or references to "greeting message"
                 - Start directly with the greeting
                 """
@@ -322,46 +340,38 @@ class LanguageSupport:
                 generation_config={
                     "temperature": 0.5,
                     "top_p": 0.8,
-                    "max_output_tokens": 150
+                    "max_output_tokens": 200
                 }
             )
             
             if response and response.text:
                 greeting = response.text.strip()
-                # Clean up any meta references more aggressively
-                greeting = re.sub(r'.*warm greeting.*', '', greeting, flags=re.IGNORECASE)
-                greeting = re.sub(r'.*greeting message.*', '', greeting, flags=re.IGNORECASE)
-                greeting = re.sub(r'^\[.*?\]', '', greeting).strip()
-                greeting = re.sub(r'^.*?:', '', greeting).strip()  # Remove any prefix with colon
                 
-                # Remove JSON-like formatting if present
-                greeting = re.sub(r'^\{.*?"response":\s*"([^"]+)".*?\}$', r'\1', greeting, flags=re.DOTALL)
-                greeting = re.sub(r'```json.*?```', '', greeting, flags=re.DOTALL).strip()
+                # More aggressive cleaning
+                greeting = re.sub(r'.*greeting.*[:।]', '', greeting, flags=re.IGNORECASE)
+                greeting = re.sub(r'^.*?[:।]\s*', '', greeting).strip()
                 greeting = re.sub(r'```.*?```', '', greeting, flags=re.DOTALL).strip()
+                greeting = re.sub(r'\{.*?\}', '', greeting, flags=re.DOTALL).strip()
                 
-                # If still contains JSON-like structure, extract the actual greeting
-                if '{' in greeting and '"' in greeting:
+                # Remove JSON formatting if present
+                if greeting.startswith('{') and greeting.endswith('}'):
                     try:
                         import json
                         parsed = json.loads(greeting)
-                        if isinstance(parsed, dict):
-                            greeting = parsed.get('response', parsed.get('greeting', parsed.get('message', greeting)))
+                        greeting = parsed.get('response', parsed.get('greeting', parsed.get('message', greeting)))
                     except:
-                        # Try to extract from simple JSON patterns
-                        match = re.search(r'"([^"]{20,})"', greeting)
-                        if match:
-                            greeting = match.group(1)
+                        pass
                 
                 return greeting.strip()
             
         except Exception as e:
-            logger.error(f"Failed to generate {language.value} greeting: {e}")
+            logger.error(f"Failed to generate enhanced {language.value} greeting: {e}")
         
-        # Enhanced fallback greetings
+        # Enhanced fallback greetings with form context
         if language == Language.GUJARATI:
-            return f"નમસ્તે! હું તમારો AI સહાયક છું અને હું તમને '{form_title}' ફોર્મ ભરવામાં મદદ કરીશ. ચાલો શરૂ કરીએ!"
+            return f"નમસ્તે! હું તમારો AI સહાયક છું. હું તમને '{form_title}' ફોર્મ ભરવામાં મદદ કરીશ. મને પૂછો અને હું તમને આ ફોર્મ સરળતાથી ભરવામાં માર્ગદર્શન આપીશ. ચાલો શરૂ કરીએ!"
         else:
-            return f"Hello! I'm your AI assistant and I'll help you fill out the '{form_title}' form. Let's get started!"
+            return f"Hello! I'm your AI assistant here to help you fill out the '{form_title}' form. I'll guide you through each step and make it easy for you. Let's get started!"
 
 # Global language support instance
 language_support = LanguageSupport()

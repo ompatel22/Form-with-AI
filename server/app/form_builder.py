@@ -38,6 +38,24 @@ class ValidationRule(BaseModel):
     pattern: Optional[str] = None
     custom_error_message: Optional[str] = None
 
+class ConditionalRule(BaseModel):
+    """Conditional field display rules"""
+    depends_on_field: str  # field name that this field depends on
+    show_when_value: str   # value that triggers showing this field
+    hide_when_value: Optional[str] = None  # value that triggers hiding this field
+
+class ConditionalField(BaseModel):
+    """Field that appears conditionally"""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    type: FieldType
+    label: str
+    description: Optional[str] = None
+    placeholder: Optional[str] = None
+    options: Optional[List[str]] = None
+    validation: ValidationRule = Field(default_factory=ValidationRule)
+    order: int = 0
+
 class FormField(BaseModel):
     """Dynamic form field definition"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -49,6 +67,9 @@ class FormField(BaseModel):
     
     # Options for choice-based fields
     options: Optional[List[str]] = None
+    
+    # Conditional fields that appear based on this field's value
+    conditional_fields: Optional[Dict[str, List[ConditionalField]]] = None
     
     # For grid fields
     rows: Optional[List[str]] = None
@@ -259,6 +280,84 @@ SAMPLE_FORMS = {
                 "description": "Please share any specific feedback or suggestions",
                 "validation": {"required": False},
                 "order": 5
+            }
+        ]
+    },
+    
+    "doctor_patient_form": {
+        "title": "Doctor's Patient Information Form",
+        "description": "Patient information form with conditional fields based on patient type",
+        "fields": [
+            {
+                "name": "patient_name",
+                "type": "short_answer",
+                "label": "Patient Name",
+                "validation": {"required": True},
+                "order": 1
+            },
+            {
+                "name": "patient_type",
+                "type": "multiple_choice",
+                "label": "Patient Type",
+                "options": ["New Patient", "Existing Patient"],
+                "validation": {"required": True},
+                "order": 2,
+                "conditional_fields": {
+                    "New Patient": [
+                        {
+                            "name": "date_of_birth",
+                            "type": "date",
+                            "label": "Date of Birth",
+                            "validation": {"required": True},
+                            "order": 3
+                        },
+                        {
+                            "name": "emergency_contact",
+                            "type": "short_answer",
+                            "label": "Emergency Contact",
+                            "validation": {"required": True},
+                            "order": 4
+                        },
+                        {
+                            "name": "insurance_provider",
+                            "type": "short_answer",
+                            "label": "Insurance Provider",
+                            "validation": {"required": False},
+                            "order": 5
+                        }
+                    ],
+                    "Existing Patient": [
+                        {
+                            "name": "patient_id",
+                            "type": "short_answer",
+                            "label": "Patient ID",
+                            "validation": {"required": True},
+                            "order": 3
+                        },
+                        {
+                            "name": "last_visit_date",
+                            "type": "date",
+                            "label": "Last Visit Date",
+                            "validation": {"required": False},
+                            "order": 4
+                        }
+                    ]
+                }
+            },
+            {
+                "name": "reason_for_visit",
+                "type": "paragraph",
+                "label": "Reason for Visit",
+                "validation": {"required": True},
+                "order": 6
+            },
+            {
+                "name": "symptoms",
+                "type": "checkboxes",
+                "label": "Current Symptoms (if any)",
+                "options": ["Fever", "Headache", "Cough", "Fatigue", "Nausea", "Other"],
+                "validation": {"required": False},
+                "order": 7
             }
         ]
     }

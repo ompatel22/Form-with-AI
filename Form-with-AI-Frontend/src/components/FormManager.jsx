@@ -1,7 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import FormBuilder from './FormBuilder.jsx';
 
-const API_URL = 'http://127.0.0.1:8000';
+const API_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+
+// Helper to bypass the ngrok browser warning page.
+const fetchWithNgrokHeader = (url, options = {}) => {
+  const headers = {
+    ...options.headers,
+    'ngrok-skip-browser-warning': 'true',
+  };
+  return fetch(url, { ...options, headers });
+};
 
 export default function FormManager({ onFormSelected, onClose }) {
   const [forms, setForms] = useState([]);
@@ -17,7 +26,7 @@ export default function FormManager({ onFormSelected, onClose }) {
 
   const loadForms = async () => {
     try {
-      const response = await fetch(`${API_URL}/forms`);
+      const response = await fetchWithNgrokHeader(`${API_URL}/forms`);
       if (response.ok) {
         const data = await response.json();
         setForms(data.forms || []);
@@ -31,7 +40,7 @@ export default function FormManager({ onFormSelected, onClose }) {
 
   const loadTemplates = async () => {
     try {
-      const response = await fetch(`${API_URL}/forms/templates/list`);
+      const response = await fetchWithNgrokHeader(`${API_URL}/forms/templates/list`);
       if (response.ok) {
         const data = await response.json();
         setTemplates(data.templates || []);
@@ -48,7 +57,7 @@ export default function FormManager({ onFormSelected, onClose }) {
 
   const handleFormSelect = async (formId) => {
     try {
-      const response = await fetch(`${API_URL}/forms/${formId}`);
+      const response = await fetchWithNgrokHeader(`${API_URL}/forms/${formId}`);
       if (response.ok) {
         const data = await response.json();
         onFormSelected(data.form);
@@ -65,7 +74,7 @@ export default function FormManager({ onFormSelected, onClose }) {
         ? `${API_URL}/forms/templates/${templateId}?title_override=${encodeURIComponent(customTitle)}`
         : `${API_URL}/forms/templates/${templateId}`;
       
-      const response = await fetch(url, { method: 'POST' });
+      const response = await fetchWithNgrokHeader(url, { method: 'POST' });
       
       if (response.ok) {
         const data = await response.json();
@@ -85,7 +94,7 @@ export default function FormManager({ onFormSelected, onClose }) {
     }
 
     try {
-      const response = await fetch(`${API_URL}/forms/${formId}`, { method: 'DELETE' });
+      const response = await fetchWithNgrokHeader(`${API_URL}/forms/${formId}`, { method: 'DELETE' });
       if (response.ok) {
         setForms(forms.filter(form => form.id !== formId));
         alert('Form deleted successfully!');
