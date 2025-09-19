@@ -183,12 +183,12 @@ const ChatSide = ({
           <button
             onClick={handleMic}
             disabled={status === "waiting..."}
-            className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center text-white font-bold transition-all shadow-lg ${
+            className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center text-white font-bold shadow-lg ${
               status.includes("listening") || status.includes("processing")
-                ? "bg-red-500 hover:bg-red-400 animate-pulse"
+                ? "bg-red-500 hover:bg-red-400 mic-recording"
                 : status === "waiting..."
-                ? "bg-gray-500 cursor-not-allowed"
-                : "bg-blue-600 hover:bg-blue-500 hover:scale-105"
+                ? "bg-gray-500 cursor-not-allowed opacity-50"
+                : "bg-blue-600 hover:bg-blue-500 mic-idle"
             }`}
             title={
               status.includes("listening") 
@@ -196,7 +196,13 @@ const ChatSide = ({
                 : "Click to start voice input"
             }
           >
-            {status.includes("listening") || status.includes("processing") ? "🔴" : "🎙️"}
+            <div className={`transition-all duration-200 ${
+              status.includes("listening") || status.includes("processing") 
+                ? "animate-bounce text-lg" 
+                : "text-base"
+            }`}>
+              {status.includes("listening") || status.includes("processing") ? "🔴" : "🎙️"}
+            </div>
           </button>
 
           {/* Text Input */}

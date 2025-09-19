@@ -38,18 +38,72 @@ function App() {
     `form_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   );
   
+  // Silence detection for 5-second timeout
+  const [lastUserActivity, setLastUserActivity] = useState(Date.now());
+  
   const initialized = useRef(false);
   const currentAudio = useRef(null);
   const activeRecognition = useRef(null);
   const phoneCallTimer = useRef(null);
   const interruptionRecognition = useRef(null);
   const microphoneState = useRef("idle"); // Track microphone state
+  const silenceTimeoutRef = useRef(null); // Track silence timeout
 
   const b64ToBlob = (b64, mime) => {
     const bytes = atob(b64);
     const arr = new Uint8Array(bytes.length);
     for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
     return new Blob([arr], { type: mime });
+  };
+
+  // Silence detection - check for user inactivity after 5 seconds
+  const checkForSilence = async () => {
+    if (!currentForm || isPlaying || status.includes("listening")) {
+      return; // Don't check silence if not in conversation, AI is speaking, or user is speaking
+    }
+
+    try {
+      const response = await fetchWithNgrokHeader(`${API}/silence-prompt?session_id=${sessionId}&language=${language}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === "success" && data.audio_b64) {
+          console.log("🔄 Playing silence prompt:", data.message);
+          setMessages(prev => [
+            ...prev,
+            {
+              text: data.message,
+              who: "agent",
+              timestamp: new Date().toISOString(),
+              isInfo: true,
+              tone: "prompt"
+            }
+          ]);
+          await playBase64WavOrFallback(data.audio_b64, data.message);
+        }
+      }
+    } catch (error) {
+      console.error("Silence prompt failed:", error);
+    }
+  };
+
+  // Start silence timeout when conversation is waiting for user response
+  const startSilenceTimeout = () => {
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+    }
+    
+    silenceTimeoutRef.current = setTimeout(() => {
+      checkForSilence();
+    }, 5000); // 5 seconds as requested
+  };
+
+  // Clear silence timeout when user is active
+  const clearSilenceTimeout = () => {
+    if (silenceTimeoutRef.current) {
+      clearTimeout(silenceTimeoutRef.current);
+      silenceTimeoutRef.current = null;
+    }
+    setLastUserActivity(Date.now());
   };
 
   const speakText = (text) => {
@@ -497,6 +551,8 @@ function App() {
 
       if (data.audio_b64 || data.reply) {
         await playBase64WavOrFallback(data.audio_b64, data.reply);
+        // Start silence timeout after AI finishes speaking
+        startSilenceTimeout();
       }
     } catch (err) {
       console.error("Dynamic chat error:", err);
@@ -518,6 +574,9 @@ function App() {
     const message = inputText.trim();
     if (!message) return;
 
+    // Clear silence timeout since user is active
+    clearSilenceTimeout();
+
     setMessages((prev) => [
       ...prev,
       {
@@ -534,6 +593,9 @@ function App() {
 
   // Enhanced microphone handling with better state management
   const handleMic = (isAutoStart = false) => {
+    // Clear silence timeout since user is starting to speak
+    clearSilenceTimeout();
+    
     const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Rec) {
       alert(
@@ -973,6 +1035,7 @@ function App() {
   useEffect(() => {
     return () => {
       stopPhoneCallMode();
+      clearSilenceTimeout();
     };
   }, []);
 

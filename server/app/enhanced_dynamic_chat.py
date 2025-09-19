@@ -1233,33 +1233,122 @@ class EnhancedDynamicFormConversation:
         elif field.type == FieldType.CHECKBOXES:
             # Handle multiple selections with strict validation
             if field.options:
-                selected = english_value.split(',') if isinstance(english_value, str) else [english_value]
+                # Parse the original value from LLM, which could be in English or Gujarati
+                selected_items = self._parse_checkbox_value(value)
                 valid_selections = []
                 invalid_options = []
-                
-                for opt in selected:
+
+                logger.info(f"Parsing checkbox value '{value}' into selections: {selected_items}")
+
+                for opt in selected_items:
                     opt = opt.strip()
-                    if opt in field.options:
-                        valid_selections.append(opt)
-                    elif self.current_language == Language.GUJARATI and self._contains_gujarati_text(opt):
-                        # Try to map Gujarati option to English
+                    if not opt:
+                        continue
+
+                    # 1. Try direct/case-insensitive match with English options
+                    matched_option = None
+                    for en_option in field.options:
+                        if opt.lower() == en_option.lower():
+                            matched_option = en_option
+                            break
+
+                    if matched_option:
+                        if matched_option not in valid_selections:
+                            valid_selections.append(matched_option)
+                        logger.info(f"✅ Matched '{opt}' to '{matched_option}'")
+                        continue
+
+                    # 2. If it's Gujarati text, try to map it
+                    if self._contains_gujarati_text(opt):
                         mapped_option = self._intelligent_option_mapping(opt, field.options)
-                        if mapped_option:
+                        if mapped_option and mapped_option not in valid_selections:
                             valid_selections.append(mapped_option)
+                            logger.info(f"✅ Mapped Gujarati '{opt}' to '{mapped_option}'")
+                            continue
+
+                    # 3. Try fuzzy matching as a last resort for English-like text
+                    fuzzy_matched_option = self._find_fuzzy_match(opt, field.options)
+                    if fuzzy_matched_option and fuzzy_matched_option not in valid_selections:
+                        valid_selections.append(fuzzy_matched_option)
+                        logger.info(f"✅ Fuzzy matched '{opt}' to '{fuzzy_matched_option}'")
+                        continue
+
+                    # 4. If nothing matches, it's an invalid option
+                    invalid_options.append(opt)
+                    logger.warning(f"❌ No match found for: '{opt}'")
+
+                # If there are invalid options, try to map them to "Other" if available
+                if invalid_options and "Other" in field.options:
+                    unmapped_to_other = []
+                    for invalid_opt in invalid_options:
+                        if "Other" not in valid_selections:
+                            valid_selections.append("Other")
+                            logger.info(f"Mapping invalid option '{invalid_opt}' to 'Other'")
                         else:
-                            invalid_options.append(opt)
-                    else:
-                        invalid_options.append(opt)
-                
+                            unmapped_to_other.append(invalid_opt)
+                    invalid_options = unmapped_to_other
+
                 if invalid_options:
                     error_msg = f"અમાન્ય વિકલ્પો: {', '.join(invalid_options)}" if self.current_language == Language.GUJARATI else f"Invalid options: {', '.join(invalid_options)}"
                     suggestion = f"ઉપલબ્ધ વિકલ્પો: {', '.join(field.options)}" if self.current_language == Language.GUJARATI else f"Available options: {', '.join(field.options)}"
+                    logger.error(f"Checkbox validation failed. Invalid: {invalid_options}, Available: {field.options}")
                     return ValidationResult(False, "", error_msg, suggestion)
-                
+
                 # Return comma-separated valid selections in English
-                return ValidationResult(True, ', '.join(valid_selections), "", "")
+                result_value = ', '.join(sorted(list(set(valid_selections)))) if valid_selections else ""
+                logger.info(f"✅ Checkbox validation successful: '{result_value}'")
+                return ValidationResult(True, result_value, "", "")
         
         return ValidationResult(True, english_value, "", "")
+
+    def _parse_checkbox_value(self, value: str) -> List[str]:
+        """Enhanced parsing of checkbox values to handle different LLM response formats"""
+        if not value or not value.strip():
+            return []
+        
+        value = value.strip()
+        
+        # Handle string representation of Python lists: "['Fever', 'Headache']" or "['Fever']"
+        if value.startswith('[') and value.endswith(']'):
+            try:
+                # Try to safely evaluate the list string
+                import ast
+                parsed_list = ast.literal_eval(value)
+                if isinstance(parsed_list, list):
+                    return [str(item).strip() for item in parsed_list if str(item).strip()]
+            except (ValueError, SyntaxError) as e:
+                logger.warning(f"Failed to parse list string '{value}': {e}")
+                # Fallback: manually extract items from list string
+                inner_value = value[1:-1]  # Remove brackets
+                # Split by comma and clean quotes
+                items = []
+                for item in inner_value.split(','):
+                    cleaned_item = item.strip().strip('\'"')
+                    if cleaned_item:
+                        items.append(cleaned_item)
+                return items
+
+        # Handle comma-separated, 'and', or 'અને' separated values
+        # Use regex to split by comma, 'and', or 'અને' with optional spaces
+        delimiters = r'\s*,\s*|\s+and\s+|\s+અને\s+'
+        items = re.split(delimiters, value, flags=re.IGNORECASE)
+
+        return [item.strip() for item in items if item and item.strip()]
+    
+    def _find_fuzzy_match(self, input_option: str, available_options: List[str]) -> Optional[str]:
+        """Find fuzzy match for slight variations in option names"""
+        input_lower = input_option.lower().strip()
+        
+        for option in available_options:
+            option_lower = option.lower().strip()
+            
+            # Check for partial matches (input contains option or vice versa)
+            if input_lower in option_lower or option_lower in input_lower:
+                # Only match if the lengths are reasonably close to avoid false positives
+                if abs(len(input_lower) - len(option_lower)) <= 3:
+                    return option
+        
+        return None
 
     def _fuzzy_match(self, text1: str, text2: str) -> bool:
         """Simple fuzzy matching for option selection"""
@@ -1284,6 +1373,30 @@ class EnhancedDynamicFormConversation:
             "જૂનું": "Existing Patient",
             "પહેલાના": "Existing Patient",
             "પુરાના": "Existing Patient",
+            
+            # Medical symptoms mappings - Enhanced for symptom recognition
+            "તાવ": "Fever",
+            "તાવ લાગે છે": "Fever",
+            "શરીર ગરમ": "Fever",
+            "શરીર ગરમ લાગે છે": "Fever",
+            "ગરમી": "Fever",
+            "બુખાર": "Fever",
+            "માથાનો દુખાવો": "Headache",
+            "માથું દુખે છે": "Headache",
+            "માથામાં દુખાવો": "Headache",
+            "હેડેક": "Headache",
+            "ઉધરસ": "Cough",
+            "ખાંસી": "Cough",
+            "કફ": "Cough",
+            "થાક": "Fatigue",
+            "થાકી ગયો": "Fatigue",
+            "કંટાળો": "Fatigue",
+            "ઉબકા": "Nausea",
+            "ઉબકા આવે છે": "Nausea",
+            "ઉલટી": "Nausea",
+            "અન્ય": "Other",
+            "બીજું": "Other",
+            "બીજું કંઈ": "Other",
             
             # Yes/No mappings
             "હા": "Yes",
