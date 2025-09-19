@@ -205,7 +205,14 @@ const EnhancedFormRenderer = ({
             </label>
             <div className="space-y-2">
               {field.options?.map((option, index) => {
-                const selectedOptions = fieldValue ? fieldValue.split(',').map(s => s.trim()) : [];
+                // FIXED: Handle both comma-separated string and array formats
+                let selectedOptions = [];
+                if (typeof fieldValue === 'string' && fieldValue) {
+                  selectedOptions = fieldValue.split(',').map(s => s.trim());
+                } else if (Array.isArray(fieldValue)) {
+                  selectedOptions = fieldValue;
+                }
+                
                 const isChecked = selectedOptions.includes(option);
                 
                 return (
@@ -222,6 +229,7 @@ const EnhancedFormRenderer = ({
                         } else {
                           newSelected = newSelected.filter(item => item !== option);
                         }
+                        // Always store as comma-separated string for consistency with backend
                         handleFieldChange(field.name, newSelected.join(', '));
                       }}
                       className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500"
@@ -241,6 +249,7 @@ const EnhancedFormRenderer = ({
                 ? "એક કરતાં વધુ વિકલ્પ પસંદ કરી શકાય" 
                 : "Multiple selections allowed"}
             </p>
+
           </div>
         );
 

@@ -370,9 +370,9 @@ class LanguageSupport:
         
         # Enhanced fallback greetings with form context
         if language == Language.GUJARATI:
-            return f"નમસ્તે! હું તમારો AI સહાયક છું. હું તમને '{form_title}' ફોર્મ ભરવામાં મદદ કરીશ. મને પૂછો અને હું તમને આ ફોર્મ સરળતાથી ભરવામાં માર્ગદર્શન આપીશ. ચાલો શરૂ કરીએ!"
+            return f"નમસ્તે! હું તમારો AI સહાયક છું. હું તમને '{form_title}' ભરવામાં મદદ કરીશ. મને પૂછો અને હું તમને આ ફોર્મ સરળતાથી ભરવામાં માર્ગદર્શન આપીશ. ચાલો શરૂ કરીએ!"
         else:
-            return f"Hello! I'm your AI assistant here to help you fill out the '{form_title}' form. I'll guide you through each step and make it easy for you. Let's get started!"
+            return f"Hello! I'm your AI assistant here to help you fill out the '{form_title}'. I'll guide you through each step and make it easy for you. Let's get started!"
 
 # Global language support instance
 language_support = LanguageSupport()
