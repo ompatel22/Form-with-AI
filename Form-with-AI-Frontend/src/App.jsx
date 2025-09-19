@@ -527,25 +527,32 @@ function App() {
       setFormData(prev => {
         const newFormData = { ...prev };
 
-        // Update from form_summary.fields
+        // Update from form_summary.fields (comprehensive field state)
         if (data.form_summary && data.form_summary.fields) {
           Object.entries(data.form_summary.fields).forEach(([fieldName, fieldInfo]) => {
             if (fieldInfo.value && fieldInfo.status === 'collected') {
               newFormData[fieldName] = fieldInfo.value;
+              console.log(`📝 Form field updated from summary: ${fieldName} = ${fieldInfo.value}`);
             }
           });
         }
 
-        // Update from updates field
+        // Update from direct updates field (latest changes)
         if (data.updates) {
           Object.entries(data.updates).forEach(([fieldName, value]) => {
-            if (value) {
+            if (value !== null && value !== undefined) {
               newFormData[fieldName] = value;
+              console.log(`📝 Form field updated directly: ${fieldName} = ${value}`);
             }
           });
         }
 
-        console.log("Updated form data:", newFormData);
+        // Log conditional field triggers for debugging
+        if (data.conditional_fields_triggered && data.conditional_fields_triggered.length > 0) {
+          console.log(`🔄 Conditional fields triggered: ${data.conditional_fields_triggered.join(', ')}`);
+        }
+
+        console.log("📋 Complete form data state:", newFormData);
         return newFormData;
       });
 
@@ -843,26 +850,84 @@ function App() {
     }
   };
 
-  // Enhanced language change handler
-  const handleLanguageChange = (newLanguage) => {
-    console.log("Language change requested:", newLanguage);
-    setLanguage(newLanguage);
+  // Enhanced language change handler with better reliability
+  const handleLanguageChange = async (newLanguage) => {
+    console.log("🌐 Language change initiated:", currentLanguage, "→", newLanguage);
     
-    // Stop any active audio/speech
-    if (currentAudio.current) {
-      currentAudio.current.pause();
-      currentAudio.current = null;
-    }
-    if (window.speechSynthesis.speaking) {
-      window.speechSynthesis.cancel();
+    // Prevent unnecessary changes
+    if (language === newLanguage) {
+      console.log("Language already set to", newLanguage);
+      return;
     }
     
-    setIsPlaying(false);
-    stopPhoneCallMode();
-    
-    // Send language change command to backend
-    const langCommand = newLanguage === "gu" ? "gujarati ma bolo" : "speak in english";
-    dynamicBackendChat(`change language to ${langCommand}`, false);
+    try {
+      // Stop any active audio/speech immediately
+      if (currentAudio.current) {
+        currentAudio.current.pause();
+        currentAudio.current = null;
+        console.log("🔇 Stopped current audio");
+      }
+      if (window.speechSynthesis.speaking) {
+        window.speechSynthesis.cancel();
+        console.log("🔇 Cancelled speech synthesis");
+      }
+      
+      setIsPlaying(false);
+      stopPhoneCallMode();
+      
+      // Update language state immediately for UI responsiveness
+      setLanguage(newLanguage);
+      
+      // Send explicit language change command to backend
+      const langCommands = {
+        "gu": "switch to gujarati language please",
+        "en": "switch to english language please"
+      };
+      
+      const langCommand = langCommands[newLanguage];
+      console.log("🌐 Sending language change command:", langCommand);
+      
+      // Send language change request without form data
+      await dynamicBackendChat(langCommand, false);
+      
+      // Update UI message
+      const switchMessage = newLanguage === "gu" 
+        ? "🌐 ભાષા બદલીને ગુજરાતીમાં સેટ કરી દીધી!" 
+        : "🌐 Language switched to English!";
+        
+      setMessages(prev => [
+        ...prev,
+        {
+          text: switchMessage,
+          who: "agent",
+          timestamp: new Date().toISOString(),
+          isInfo: true,
+          tone: "friendly"
+        }
+      ]);
+      
+      console.log("✅ Language change completed successfully");
+      
+    } catch (error) {
+      console.error("❌ Language change failed:", error);
+      
+      // Revert language on error
+      setLanguage(language);
+      
+      const errorMessage = language === "en" 
+        ? "Failed to change language. Please try again."
+        : "ભાષા બદલવામાં નિષ્ફળતા. કૃપા કરીને ફરીથી પ્રયાસ કરો.";
+        
+      setMessages(prev => [
+        ...prev,
+        {
+          text: errorMessage,
+          who: "agent",
+          timestamp: new Date().toISOString(),
+          isError: true
+        }
+      ]);
+    }
   };
 
   // Rest of the component remains the same...

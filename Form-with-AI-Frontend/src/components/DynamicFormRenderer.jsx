@@ -1,6 +1,34 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 const DynamicFormRenderer = ({ formSchema, formData, onChange, onSubmit }) => {
+  const [visibleFields, setVisibleFields] = useState(new Set());
+
+  // Calculate which conditional fields should be visible
+  useEffect(() => {
+    const newVisibleFields = new Set();
+    
+    if (formSchema && formSchema.fields) {
+      formSchema.fields.forEach(field => {
+        // Add main fields
+        newVisibleFields.add(field.name);
+        
+        // Check conditional fields
+        if (field.conditional_fields && formData[field.name]) {
+          const selectedValue = formData[field.name];
+          const conditionalFieldsForValue = field.conditional_fields[selectedValue];
+          
+          if (conditionalFieldsForValue) {
+            conditionalFieldsForValue.forEach(conditionalField => {
+              newVisibleFields.add(conditionalField.name);
+            });
+          }
+        }
+      });
+    }
+    
+    setVisibleFields(newVisibleFields);
+  }, [formSchema, formData]);
+
   if (!formSchema || !formSchema.fields) {
     return (
       <div className="flex-1 bg-gradient-to-b from-gray-700 to-gray-800 p-8 rounded-l-2xl border-r border-gray-700">
@@ -112,23 +140,34 @@ const DynamicFormRenderer = ({ formSchema, formData, onChange, onSubmit }) => {
           </div>
         );
 
-      case 'date':
-        return (
-          <div key={field.name} className="mb-6">
-            {getFieldLabel()}
-            <input
-              type="date"
-              value={value}
-              onChange={(e) => handleFieldChange(field.name, e.target.value)}
-              className="w-full p-4 bg-gray-700 text-white border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-              required={isRequired}
-            />
-            <p className="text-xs text-gray-400 mt-2">
-              Or speak naturally: "January 1st, 2000" or "22nd December 2004"
-            </p>
-          </div>
-        );
-
+case 'date':
+      // Convert MM/DD/YYYY to YYYY-MM-DD for date input
+      const displayValue = value
+        ? (() => {
+            const [month, day, year] = value.split('/');
+            return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+          })()
+        : '';
+      return (
+        <input
+          type="date"
+          name={field.name}
+          value={displayValue}
+          onChange={(e) => {
+            // Convert YYYY-MM-DD back to MM/DD/YYYY for formData
+            const dateValue = e.target.value;
+            if (dateValue) {
+              const [year, month, day] = dateValue.split('-');
+              handleFieldChange(field.name, `${month}/${day}/${year}`);
+            } else {
+              handleFieldChange(field.name, '');
+            }
+          }}
+          required={field.validation?.required}
+          className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
+        />
+      );
+       
       case 'time':
         return (
           <div key={field.name} className="mb-6">
@@ -330,6 +369,38 @@ const DynamicFormRenderer = ({ formSchema, formData, onChange, onSubmit }) => {
     }
   };
 
+  // Get all fields including conditional ones (from first file logic)
+  const getAllFields = () => {
+    const allFields = [];
+    
+    // Sort fields by order first
+    const sortedFields = [...formSchema.fields].sort((a, b) => (a.order || 0) - (b.order || 0));
+    
+    sortedFields.forEach(field => {
+      // Add main field
+      allFields.push(field);
+      
+      // Add conditional fields if they should be visible
+      if (field.conditional_fields && formData[field.name]) {
+        const selectedValue = formData[field.name];
+        const conditionalFieldsForValue = field.conditional_fields[selectedValue];
+        
+        if (conditionalFieldsForValue) {
+          conditionalFieldsForValue.forEach(conditionalField => {
+            allFields.push({
+              ...conditionalField,
+              isConditional: true,
+              parentField: field.name,
+              parentValue: selectedValue
+            });
+          });
+        }
+      }
+    });
+    
+    return allFields;
+  };
+
   return (
     <div className="flex-1 bg-gradient-to-b from-gray-700 to-gray-800 p-8 rounded-l-2xl border-r border-gray-700">
       <div className="max-w-2xl mx-auto">
@@ -345,9 +416,19 @@ const DynamicFormRenderer = ({ formSchema, formData, onChange, onSubmit }) => {
         </div>
 
         <form onSubmit={onSubmit} className="space-y-8">
-          {formSchema.fields
-            ?.sort((a, b) => (a.order || 0) - (b.order || 0))
-            ?.map(renderField)}
+          {getAllFields().map((field) => (
+            <div 
+              key={field.id || field.name}
+              className={field.isConditional ? 'ml-6 pl-4 border-l-2 border-blue-500/30 bg-gray-700/30 rounded-r-lg p-4' : ''}
+            >
+              {field.isConditional && (
+                <div className="text-xs text-blue-400 mb-2 font-medium">
+                  ↳ Shown because "{field.parentValue}" was selected
+                </div>
+              )}
+              {renderField(field)}
+            </div>
+          ))}
 
           <div className="flex gap-4 pt-8 border-t border-gray-600">
             <button
@@ -359,7 +440,7 @@ const DynamicFormRenderer = ({ formSchema, formData, onChange, onSubmit }) => {
           </div>
         </form>
 
-        {/* Voice instructions */}
+        {/* Voice instructions
         <div className="mt-8 p-6 bg-blue-500/10 border border-blue-500/20 rounded-xl">
           <h3 className="text-blue-300 font-semibold mb-2 flex items-center">
             🎙️ Voice Instructions
@@ -368,7 +449,7 @@ const DynamicFormRenderer = ({ formSchema, formData, onChange, onSubmit }) => {
             You can fill this form using voice! Just speak naturally to the AI assistant. 
             For multiple selections (checkboxes), say something like "fever and headache" or "option 1, option 2".
           </p>
-        </div>
+        </div> */}
       </div>
     </div>
   );
