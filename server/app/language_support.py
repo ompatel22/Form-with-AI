@@ -1,47 +1,50 @@
 """
-Gujarati Language Support Module
-Handles bilingual conversation, transliteration, and UI text translation
+Enhanced Language Support System with Improved Gujarati Integration
+Handles language detection, switching, and multilingual responses
 """
-import re
 import json
+import re
 import logging
-from typing import Dict, Any, Optional, List
 from enum import Enum
+from typing import Dict, List, Any, Optional
 import google.generativeai as genai
+
 from .config import settings
 
 logger = logging.getLogger(__name__)
 
-# Configure Gemini for language support
-genai.configure(api_key=settings.GEMINI_API_KEY)
-
-class Language(str, Enum):
+class Language(Enum):
     ENGLISH = "en"
     GUJARATI = "gu"
 
 class LanguageSupport:
-    """Handles bilingual support for English and Gujarati"""
+    """Enhanced language support with improved Gujarati handling"""
     
     def __init__(self):
+        # Configure Gemini
+        genai.configure(api_key=settings.GEMINI_API_KEY)
         self.model = genai.GenerativeModel(
             model_name=settings.GEMINI_MODEL,
             system_instruction=self._get_language_system_prompt()
         )
         
-        # UI translations
+        # Enhanced UI translations
         self.ui_translations = {
             "en": {
-                "form_title": "Form",
                 "chat_title": "AI Assistant",
                 "send": "Send",
-                "microphone": "🎙️ Mic",
-                "reset": "Reset Chat",
+                "microphone": "Mic",
+                "listening": "Listening...",
+                "processing": "Processing...",
+                "waiting": "Waiting...",
+                "error": "Error",
+                "reset": "Reset",
                 "submit": "Submit",
                 "back_to_forms": "← Back to Forms",
-                "status_idle": "idle",
-                "status_listening": "listening",
-                "status_waiting": "waiting...",
-                "status_error": "error",
+                "status_idle": "Idle",
+                "status_listening": "Listening",
+                "status_waiting": "Waiting...",
+                "status_error": "Error",
                 "language_switch": "Switch to Gujarati",
                 "skip_audio": "Skip",
                 "ai_speaking": "AI Speaking...",
@@ -50,16 +53,19 @@ class LanguageSupport:
                 "session_timeout": "Session timeout. Please restart the conversation.",
                 "voice_commands": {
                     "stop": ["stop", "pause", "wait", "hold"],
-                    "yes": ["yes", "yeah", "yep", "correct", "right"],
-                    "no": ["no", "nope", "wrong", "incorrect"]
+                    "yes": ["yes", "correct", "right", "true"],
+                    "no": ["no", "wrong", "false", "incorrect"]
                 }
             },
             "gu": {
-                "form_title": "ફોર્મ",
                 "chat_title": "AI સહાયક",
                 "send": "મોકલો",
-                "microphone": "🎙️ માઇક",
-                "reset": "ચેટ રીસેટ કરો",
+                "microphone": "માઇક",
+                "listening": "સાંભળી રહ્યું છે...",
+                "processing": "પ્રક્રિયા થઈ રહી છે...",
+                "waiting": "રાહ જોઈ રહ્યું છે...",
+                "error": "ભૂલ",
+                "reset": "ફરીથી શરૂ કરો",
                 "submit": "સબમિટ કરો",
                 "back_to_forms": "← ફોર્મ પર પાછા",
                 "status_idle": "નિષ્ક્રિય",
@@ -88,7 +94,7 @@ class LanguageSupport:
         LANGUAGE CAPABILITIES:
         1. Generate responses in the requested language (English or Gujarati)
         2. Translate between English and Gujarati
-        3. Handle transliteration (English-written Gujarati to proper Gujarati)
+        3. Handle transliterated Gujarati (English-written Gujarati)
         4. Maintain conversation context across language switches
         
         TRANSLITERATION RULES:
@@ -224,7 +230,7 @@ class LanguageSupport:
             4. Use culturally appropriate expressions
             5. For Gujarati, use proper script and common phrases
             
-            Return JSON format with the response.
+            Return only the response text, no JSON formatting.
             """
             
             response = self.model.generate_content(
@@ -232,33 +238,23 @@ class LanguageSupport:
                 generation_config={
                     "temperature": 0.3,
                     "top_p": 0.9,
-                    "max_output_tokens": 1024
+                    "max_output_tokens": 512
                 }
             )
             
             if response and response.text:
                 response_text = response.text.strip()
-                try:
-                    # First, try direct parsing
-                    parsed = json.loads(response_text)
-                    return parsed
-                except json.JSONDecodeError:
-                    # If direct parsing fails, try to extract JSON from markdown or other text
-                    json_patterns = [
-                        r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}',  # Handles nested JSON
-                        r'\{.*\}'  # Greedy fallback
-                    ]
-                    for pattern in json_patterns:
-                        matches = re.findall(pattern, response_text, re.DOTALL)
-                        for match in matches:
-                            try:
-                                return json.loads(match)
-                            except json.JSONDecodeError:
-                                continue
                 
-                # If all JSON parsing fails, treat the whole text as the response
-                logger.warning(f"Could not parse JSON from LLM response in language_support: {response_text}")
-                return {"response": response_text, "language": target_language.value}
+                # Clean any JSON artifacts
+                response_text = re.sub(r'\{.*?\}', '', response_text, flags=re.DOTALL)
+                response_text = re.sub(r'```.*?```', '', response_text, flags=re.DOTALL)
+                response_text = response_text.strip()
+                
+                return {
+                    "response": response_text,
+                    "language": target_language.value,
+                    "transliteration": None
+                }
             
             # Fallback response
             fallback_text = self.get_ui_text("are_you_there", target_language)
@@ -319,6 +315,8 @@ class LanguageSupport:
                 - સંક્ષિપ્ત અને મિત્રતાપૂર્ણ રાખો
                 - કોઈ મેટા ટેક્સટ નહીં
                 - સીધું શુભેચ્છા સંદેશથી શરૂ કરો
+                
+                માત્ર આવકારદાયક સંદેશ આપો, કોઈ વધારાનું નહીં.
                 """
             else:
                 prompt = f"""
@@ -334,6 +332,8 @@ class LanguageSupport:
                 - Keep it concise and friendly
                 - NO meta text or references to "greeting message"
                 - Start directly with the greeting
+                
+                Only provide the greeting message, nothing extra.
                 """
             
             response = self.model.generate_content(
@@ -341,34 +341,31 @@ class LanguageSupport:
                 generation_config={
                     "temperature": 0.5,
                     "top_p": 0.8,
-                    "max_output_tokens": 200
+                    "max_output_tokens": 150
                 }
             )
             
             if response and response.text:
                 greeting = response.text.strip()
                 
-                # More aggressive cleaning
-                greeting = re.sub(r'.*greeting.*[:।]', '', greeting, flags=re.IGNORECASE)
-                greeting = re.sub(r'^.*?[:।]\s*', '', greeting).strip()
-                greeting = re.sub(r'```.*?```', '', greeting, flags=re.DOTALL).strip()
+                # Aggressive cleaning of JSON and meta text
                 greeting = re.sub(r'\{.*?\}', '', greeting, flags=re.DOTALL).strip()
+                greeting = re.sub(r'```.*?```', '', greeting, flags=re.DOTALL).strip()
+                greeting = re.sub(r'^.*?[:।]\s*', '', greeting).strip()
                 
-                # Remove JSON formatting if present
-                if greeting.startswith('{') and greeting.endswith('}'):
-                    try:
-                        import json
-                        parsed = json.loads(greeting)
-                        greeting = parsed.get('response', parsed.get('greeting', parsed.get('message', greeting)))
-                    except:
-                        pass
+                # Remove any remaining JSON-like patterns
+                if greeting.startswith('{') or greeting.endswith('}'):
+                    greeting = re.sub(r'[{}]', '', greeting).strip()
                 
-                return greeting.strip()
+                return greeting if greeting else self._get_fallback_greeting(language, form_title)
             
         except Exception as e:
             logger.error(f"Failed to generate enhanced {language.value} greeting: {e}")
         
-        # Enhanced fallback greetings with form context
+        return self._get_fallback_greeting(language, form_title)
+    
+    def _get_fallback_greeting(self, language: Language, form_title: str) -> str:
+        """Get fallback greeting when generation fails"""
         if language == Language.GUJARATI:
             return f"નમસ્તે! હું તમારો AI સહાયક છું. હું તમને '{form_title}' ફોર્મ ભરવામાં મદદ કરીશ. મને પૂછો અને હું તમને આ ફોર્મ સરળતાથી ભરવામાં માર્ગદર્શન આપીશ. ચાલો શરૂ કરીએ!"
         else:
