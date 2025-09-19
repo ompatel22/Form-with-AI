@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import FormBuilder from './FormBuilder.jsx';
+import QRCode from 'qrcode';
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 
@@ -18,6 +19,9 @@ export default function FormManager({ onFormSelected, onClose }) {
   const [loading, setLoading] = useState(true);
   const [showFormBuilder, setShowFormBuilder] = useState(false);
   const [activeTab, setActiveTab] = useState('forms'); // 'forms' or 'templates'
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState('');
+  const [qrCodeShareUrl, setQrCodeShareUrl] = useState('');
 
   useEffect(() => {
     loadForms();
@@ -88,6 +92,20 @@ export default function FormManager({ onFormSelected, onClose }) {
     }
   };
 
+  const showQrCodeForForm = (formId) => {
+    const shareUrl = `${window.location.origin}/forms/${formId}/fill`;
+    setQrCodeShareUrl(shareUrl);
+    QRCode.toDataURL(shareUrl, { width: 256, margin: 2 })
+      .then(url => {
+        setQrCodeDataUrl(url);
+        setShowQrModal(true);
+      })
+      .catch(err => {
+        console.error('Error generating QR code:', err);
+        alert('Could not generate QR code.');
+      });
+  };
+
   const deleteForm = async (formId) => {
     if (!confirm('Are you sure you want to delete this form? This action cannot be undone.')) {
       return;
@@ -116,6 +134,55 @@ export default function FormManager({ onFormSelected, onClose }) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 p-4 md:p-8">
+      {showQrModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 backdrop-blur-sm" 
+          onClick={() => setShowQrModal(false)}
+        >
+          <div 
+            className="bg-gray-800 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-md transform transition-all" 
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="p-6 border-b border-gray-700 flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">Scan to Open Form</h3>
+              <button
+                onClick={() => setShowQrModal(false)}
+                className="text-gray-400 hover:text-white text-2xl transition-colors"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-8 text-center">
+              <p className="text-gray-300 mb-6">Scan the code below with your mobile device to open the form instantly.</p>
+              <div className="p-2 bg-white inline-block rounded-lg shadow-lg">
+                {qrCodeDataUrl && <img src={qrCodeDataUrl} alt="Form QR Code" className="rounded-md" />}
+              </div>
+              <div className="mt-6">
+                <p className="text-xs text-gray-400 mb-2">Or copy the shareable link:</p>
+                <div className="bg-gray-900 p-3 rounded-lg text-sm text-gray-300 font-mono break-all text-left relative">
+                  {qrCodeShareUrl}
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(qrCodeShareUrl);
+                      alert('Link copied to clipboard!');
+                    }}
+                    className="absolute top-1/2 right-2 -translate-y-1/2 p-1.5 bg-gray-700 rounded-md hover:bg-gray-600"
+                    title="Copy link"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-gray-300">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 7.5V6.108c0-1.135.845-2.098 1.976-2.192.373-.03.748-.03 1.125 0 1.131.094 1.976 1.057 1.976 2.192V7.5M8.25 7.5h7.5M8.25 7.5c-1.036 0-1.875.84-1.875 1.875v8.25c0 1.035.84 1.875 1.875 1.875h7.5c1.035 0 1.875-.84 1.875-1.875v-8.25c0-1.036-.84-1.875-1.875-1.875M16.5 7.5h-7.5" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8">
@@ -252,6 +319,16 @@ export default function FormManager({ onFormSelected, onClose }) {
                           title="Copy shareable link"
                         >
                           🔗
+                        </button>
+                        <button
+                          onClick={() => showQrCodeForForm(form.id)}
+                          className="px-4 py-3 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
+                          title="Show QR Code"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-1.036.84-1.875 1.875-1.875h4.5c1.036 0 1.875.84 1.875 1.875v4.5c0 1.036-.84 1.875-1.875 1.875h-4.5A1.875 1.875 0 013.75 9.375v-4.5zM3.75 14.625c0-1.036.84-1.875 1.875-1.875h4.5c1.036 0 1.875.84 1.875 1.875v4.5c0 1.036-.84 1.875-1.875 1.875h-4.5a1.875 1.875 0 01-1.875-1.875v-4.5zM13.5 4.875c0-1.036.84-1.875 1.875-1.875h4.5c1.036 0 1.875.84 1.875 1.875v4.5c0 1.036-.84 1.875-1.875 1.875h-4.5a1.875 1.875 0 01-1.875-1.875v-4.5z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 14.625v4.5a1.875 1.875 0 001.875 1.875h4.5a1.875 1.875 0 001.875-1.875v-4.5a1.875 1.875 0 00-1.875-1.875h-4.5a1.875 1.875 0 00-1.875 1.875z" />
+                          </svg>
                         </button>
                         <button
                           onClick={() => deleteForm(form.id)}
