@@ -131,7 +131,6 @@ class DynamicChatRequest(BaseModel):
     message: str = Field("", max_length=1000)
     manual_form_data: Optional[Dict[str, Any]] = None  # For detecting manual field entries
     language: Optional[str] = "en"  # Language preference
-    interruption_detected: Optional[bool] = False  # Voice interruption flag
 
 class DynamicChatResponse(BaseModel):
     action: str

@@ -98,33 +98,8 @@ const EnhancedChatSide = ({
     setLastUserActivity(Date.now());
   };
 
-  // Handle voice interruption
-  const handleVoiceCommand = (command) => {
-    const interruptionWords = currentLanguage === 'gu' 
-      ? ['બંધ કરો', 'રોકો', 'થોભો', 'રાહ', 'છોડો']
-      : ['stop', 'pause', 'wait', 'hold', 'skip'];
-
-    const commandLower = command.toLowerCase().trim();
-    const isInterruption = interruptionWords.some(word => 
-      commandLower.includes(word.toLowerCase())
-    );
-
-    if (isInterruption && typeof onVoiceInterruption === 'function') {
-      onVoiceInterruption(command);
-      return true;
-    }
-    return false;
-  };
-
   const handleEnhancedSend = async () => {
     handleUserActivity();
-    
-    // Check for voice interruption commands
-    if (inputText.trim() && handleVoiceCommand(inputText.trim())) {
-      setInputText("");
-      return;
-    }
-
     await handleSend();
   };
 
@@ -132,8 +107,7 @@ const EnhancedChatSide = ({
     handleUserActivity();
     setIsListening(true);
     
-    // Enhanced microphone handling with interruption detection
-    const enhancedMicHandler = () => {
+    const micHandler = () => {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
         alert(
@@ -171,13 +145,6 @@ const EnhancedChatSide = ({
 
         finalTranscript = final;
         
-        // Check for interruption commands in real-time
-        const currentText = (final + interimTranscript).trim();
-        if (currentText && handleVoiceCommand(currentText)) {
-          recognition.stop();
-          return;
-        }
-
         // Reset silence timer
         if (silenceTimer) clearTimeout(silenceTimer);
         if (currentText.length > 0) {
@@ -211,7 +178,7 @@ const EnhancedChatSide = ({
       recognition.start();
     };
 
-    enhancedMicHandler();
+    micHandler();
   };
 
   const handleKeyDown = (e) => {
@@ -378,14 +345,6 @@ const EnhancedChatSide = ({
           </div>
         )}
 
-        {/* Voice commands help */}
-        <div className="mt-3 text-xs text-gray-400">
-          {currentLanguage === 'gu' ? (
-            <>📢 અવાજ આદેશો: "બંધ કરો", "રોકો", "છોડો" | ⌨️ ESC કી દબાવો</>
-          ) : (
-            <>📢 Voice commands: "stop", "pause", "skip" | ⌨️ Press ESC key</>
-          )}
-        </div>
       </div>
     </div>
   );

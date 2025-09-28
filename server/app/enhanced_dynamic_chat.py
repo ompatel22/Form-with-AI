@@ -822,49 +822,41 @@ class EnhancedDynamicFormConversation:
         
         USER INPUT: "{user_input}"
         
-        YOUR COMPREHENSIVE TASK:
-        Based on ALL the context above, perform the following steps and generate ONE JSON response.
-
-        1.  **ANALYZE INTENT**: Determine the user's primary goal. Is it:
-            a.  **Data Collection**: Providing information for the current `Next Field`?
-            b.  **Data Retrieval**: Asking for information they already gave (e.g., "What is my name?")?
-            c.  **Correction**: Correcting a previous entry?
-            d.  **Command**: Giving a command like "skip" or "switch to Gujarati"?
-            e.  **General Question**: Asking something unrelated to the form?
-
-        2.  **PROCESS BASED ON INTENT**:
-            *   **If Data Collection**: Extract the value for the `Next Field`.
-            *   **If Data Retrieval**: Look at the `CURRENT FIELD STATES`. Find the requested information and provide it to the user in a natural, conversational way in their language. **After answering, gently guide them back to the `Next Field`**.
-            *   **If Correction**: If the user provides a new value, identify the field and the new value. If they only state an intent to correct (e.g., "I want to change my name"), ask them for the correct information for that specific field before moving on.
-            *   **If Command**: Identify the command (e.g., language switch).
-            *   **If General Question**: Provide a brief, helpful answer, and then immediately steer the conversation back to the `Next Field`.
-
-        3.  **GENERATE RESPONSE**:
-            -   Create a short, natural, conversational `ask` message in the user's current language.
-            -   **This message must directly address the user's intent. If they asked a question, answer it first, and only then ask the next form question.**
-            -   Determine the `action` (e.g., `ask`, `done`, `clarify`, `language_switch`).
-            -   Determine the `field_focus` (the name of the field you are now asking about).
-
-
+        YOUR TASK: Analyze the user's input and generate a JSON response by following these steps precisely.
+        
+        **Step 1: Internal Thought Process (Chain of Thought).**
+        First, think through the user's request. This is your internal monologue.
+        - **Intent Analysis:** What is the user's primary goal? Are they providing data, asking a question, trying to correct something, or giving a command?
+        - **Memory Check:** Look at `CURRENT FIELD STATES`. Do I have information related to the user's request? (e.g., If they ask "what is my name?", check if `patient_name` has a value).
+        - **Action Plan:** Based on the intent and memory, what should I do?
+            - If they are asking a question I can answer from memory, my plan is to answer it and then re-ask for the `Next Field`.
+            - If they want to correct something, my plan is to acknowledge it and ask for the new value.
+            - If they are providing data, my plan is to extract it and ask the next question.
+        
+        **Step 2: Generate the Final JSON Response.**
+        Based on your thought process, create the JSON output.
+        
+        **PRIORITY OF ACTIONS (VERY IMPORTANT):**
+        1.  **Data Retrieval/Questions:** If the user asks a question (e.g., "what is my name?"), you MUST answer it using the data from `CURRENT FIELD STATES`. This is your highest priority.
+        2.  **Corrections:** If the user wants to change information (e.g., "I want to change my name"), you MUST handle the correction.
+        3.  **Data Collection:** Only if the user is not asking a question or making a correction, should you process their input as data for the `Next Field`.
+        
         RESPONSE FORMAT (JSON only):
         {{
+            "thought_process": "This is my internal monologue. First, I analyze the user's intent. The user said 'I want to change my name and what is my name'. This is a dual intent: a correction and a question. My highest priority is answering the question. I will check `CURRENT FIELD STATES` for `patient_name`. I see the value is 'Om Patel'. So, I will first tell them their name is Om Patel, and then I will ask them for the new name they want to use. My action will be 'correction' and my `ask` message will reflect this plan.",
             "action": "ask|done|clarify|language_switch|correction|retrieval",
             "confidence": float between 0-1,
             "detected_language": "en|gu|mixed",
-            "extracted_fields": {{
-                "field_name": "extracted_value"
-            }},
+            "extracted_fields": {{}},
             "corrections": {{ "field_name": "corrected_value" }},
             "special_commands": ["list of any special commands"],
             "ask": "The full response to the user, in their language. This MUST answer their question if they asked one, and only then ask the next form question.",
             "reply": "Same as 'ask'.",
             "field_focus": "The name of the field you are now asking about.",
-            "metadata": {{
-                "processing_notes": "any relevant processing information"
-            }}
+            "metadata": {{ "processing_notes": "Handled a dual-intent request for retrieval and correction." }}
         }}
 
-        CRITICAL: Always check the `CURRENT FIELD STATES` to answer user questions about data they've already provided. Do not forget what they have told you. If the user asks a question, you MUST answer it before asking for the next field.
+        **CRITICAL RULE:** Your response MUST directly address the user's stated intent. If they ask a question, your `ask` message must contain the answer. If they want to correct something, your `ask` message must acknowledge the correction. DO NOT ignore the user's request and move on.
         """
     
     def _get_all_field_states(self) -> Dict[str, Dict[str, Any]]:

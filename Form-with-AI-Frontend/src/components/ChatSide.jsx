@@ -120,16 +120,6 @@ const ChatSide = ({
             </div>
           </div>
         </div>
-
-        {/* Phone Call Experience Indicator */}
-        {(isPlaying || status.includes("listening")) && (
-          <div className="mt-3 p-3 bg-gray-600/50 rounded-lg border border-gray-500/50">
-            <div className="flex items-center gap-2 text-sm text-gray-300">
-              <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-              <span>Phone call mode active - speak anytime to interrupt</span>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Messages Area */}
@@ -160,7 +150,7 @@ const ChatSide = ({
               onClick={onSkipAudio}
               className="px-6 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg transition-colors shadow-lg flex items-center gap-2"
             >
-              ⏭️ Skip & Speak
+              ⏭️ Skip
             </button>
           </div>
         )}
@@ -230,16 +220,6 @@ const ChatSide = ({
               {language === "en" ? "Send" : "મોકલો"}
             </button>
           </div>
-        </div>
-
-        {/* Phone Call Instructions */}
-        <div className="mt-4 text-center">
-          <p className="text-xs text-gray-400">
-            {language === "en" 
-              ? "💡 Phone call mode: You can interrupt AI anytime by speaking"
-              : "💡 ફોન કૉલ મોડ: તમે કોઈપણ સમયે બોલીને AI ને અટકાવી શકો છો"
-            }
-          </p>
         </div>
 
         {/* Reset Button
