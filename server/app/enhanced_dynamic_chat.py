@@ -1,11 +1,10 @@
 """
 Enhanced Dynamic Conversational Form Handler with Multilingual Support
-Integrates all new features: Gujarati support, enhanced date parsing, 
-voice interruption, and silence management
+Integrates all new features: Gujarati support, enhanced date parsing
 """
 import json
 import re
-import time
+import time, datetime as dt
 import asyncio
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
@@ -13,13 +12,10 @@ import google.generativeai as genai
 import logging
 
 from .form_builder import FormSchema, FormField, FieldType, form_store
-from .validators import validate_value, clean_speech_input
 from .memory import SessionState, FieldStatus, MessageRole
 from .config import settings
 from .language_support import Language, language_support
 from .enhanced_date_parser import enhanced_date_parser
-from .silence_manager import silence_manager
-from .voice_interruption import voice_interruption_handler, InterruptionType
 
 logger = logging.getLogger(__name__)
 
@@ -177,15 +173,27 @@ class EnhancedValidator:
             return ValidationResult(False, "", error_msg, suggestion)
         
         # Use enhanced date parser
-        formatted_date = enhanced_date_parser.parse_and_format(value.strip())
+        formatted_date, error_reason = enhanced_date_parser.parse_and_validate(value.strip(), "MM/dd/yyyy")
         
         if formatted_date:
-            return ValidationResult(True, formatted_date, "", "")
+            return ValidationResult(True, str(formatted_date), "", "")
         else:
-            error_msg = "અમાન્ય તારીખ ફોર્મેટ" if language == Language.GUJARATI else "Invalid date format"
-            suggestion = ("કૃપા કરીને આ ફોર્મેટ વાપરો: 'જાન્યુઆરી 1, 2000', '01/01/2000', અથવા '22મી ડિસેમ્બર 2004'" 
-                         if language == Language.GUJARATI else 
-                         "Please use a format like 'January 1, 2000', '01/01/2000', 'Jan 1 2000', or '22nd December 2004'")
+            # Provide specific error messages based on the reason for failure
+            if error_reason == "future_date" or error_reason == "future_year":
+                error_msg = "તારીખ ભવિષ્યમાં ન હોઈ શકે" if language == Language.GUJARATI else "The date cannot be in the future"
+                suggestion = "કૃપા કરીને સાચી જન્મ તારીખ આપો" if language == Language.GUJARATI else "Please provide a correct date of birth"
+            elif error_reason == "past_year_too_early":
+                error_msg = "વર્ષ ખૂબ જૂનું લાગે છે" if language == Language.GUJARATI else "The year seems too far in the past"
+                suggestion = "કૃપા કરીને માન્ય વર્ષ સાથે ફરી પ્રયાસ કરો" if language == Language.GUJARATI else "Please try again with a valid year"
+            elif error_reason == "invalid_date_combination":
+                error_msg = "આ તારીખ અસ્તિત્વમાં નથી" if language == Language.GUJARATI else "This date does not exist"
+                suggestion = "કૃપા કરીને દિવસ, મહિનો અને વર્ષ તપાસો" if language == Language.GUJARATI else "Please check the day, month, and year"
+            else: # unrecognized_format, empty_input, etc.
+                error_msg = "અમાન્ય તારીખ ફોર્મેટ" if language == Language.GUJARATI else "Invalid date format"
+                suggestion = ("કૃપા કરીને આ ફોર્મેટ વાપરો: 'જાન્યુઆરી 1, 2000', '01/01/2000', અથવા '22મી ડિસેમ્બર 2004'" 
+                             if language == Language.GUJARATI else 
+                             "Please use a format like 'January 1, 2000', '01/01/2000', 'Jan 1 2000', or '22nd December 2004'")
+
             return ValidationResult(False, "", error_msg, suggestion)
 
 class EnhancedDynamicFormConversation:
@@ -219,13 +227,6 @@ class EnhancedDynamicFormConversation:
         self.last_request_time = 0
         self.min_request_interval = 0.5
         
-        # Initialize silence monitoring
-        silence_manager.start_session(
-            session_state.session_id, 
-            self.current_language,
-            None
-        )
-    
     def _initialize_form_session(self):
         """Initialize form-specific session context"""
         form_context_key = f"form_{self.form_id}"
@@ -240,7 +241,8 @@ class EnhancedDynamicFormConversation:
                 "user_name": None,
                 "conversation_style": "friendly",
                 "language": "en",
-                "greeting_sent": False
+                "greeting_sent": False,
+                "clarification_context": {} # For handling partial corrections
             }
         
         # Initialize form fields if not done
@@ -288,7 +290,6 @@ class EnhancedDynamicFormConversation:
         
         MULTILINGUAL CAPABILITIES:
         - Detect language preference from user input
-        - Generate responses in requested language
         - Handle transliterated Gujarati (English-written Gujarati)
         - Switch languages seamlessly when requested
         - Maintain conversation context across language switches
@@ -296,13 +297,14 @@ class EnhancedDynamicFormConversation:
         FIELD PROCESSING RULES:
         1. ENHANCED DATE PARSING: Accept natural formats like "22nd December 2004", "December 22nd 2004"
         2. STRICT CHECKBOX VALIDATION: Only allow exact matches from provided options
-        3. VOICE INTERRUPTION: Respect voice commands like "stop", "pause", "બંધ કરો", "રોકો"
         4. MULTILINGUAL VALIDATION: Provide error messages in user's preferred language
         5. **FORM DATA MUST ALWAYS BE IN ENGLISH, EVEN IF USER SPEAKS GUJARATI**
         6. **FIELD CORRECTION DETECTION**: Detect when user is correcting previously filled fields
         7. **CONDITIONAL FIELD HANDLING**: When radio buttons change, ask about new conditional fields
         8. **SMART FIELD TRACKING**: Always update fields when user provides corrections
         
+        MULTI-INTENT HANDLING:
+        - If a user provides an answer for the current field AND corrects a previous field in the same sentence, you MUST process both. First, apply the correction, then process the answer for the current field.
         CONVERSATION MANAGEMENT:
         - Start with contextual greeting explaining the form purpose and fields to be collected
         - Ask for ONE field at a time
@@ -346,9 +348,6 @@ class EnhancedDynamicFormConversation:
         form_context_key = self._get_form_context_key()
         if form_context_key in self.session.context:
             self.session.context[form_context_key]["language"] = language.value
-        
-        # Update silence manager language
-        silence_manager.update_language(self.session.session_id, language)
         
         logger.info(f"Language set to {language.value} for session {self.session.session_id}")
     
@@ -515,9 +514,6 @@ class EnhancedDynamicFormConversation:
         """Enhanced user input processing with multilingual support"""
         form_context_key = self._get_form_context_key()
         
-        # Update activity for silence manager
-        silence_manager.update_activity(self.session.session_id)
-        
         # Check for language switch command first with improved detection
         new_language = language_support.detect_language_switch_command(user_text, self.current_language)
         if new_language:
@@ -548,52 +544,6 @@ class EnhancedDynamicFormConversation:
                 "language": new_language.value,
                 "reply": full_message
             }
-        
-        # Check for voice interruption commands
-        if voice_interruption_handler.is_interruption_command(user_text, self.current_language):
-            interruption_type = voice_interruption_handler.detect_interruption(user_text, self.current_language)
-            
-            if interruption_type == InterruptionType.STOP:
-                stop_msg = "બંધ કર્યું" if self.current_language == Language.GUJARATI else "Stopped"
-                return {
-                    "action": "interrupt_stop",
-                    "updates": {},
-                    "ask": stop_msg,
-                    "field_focus": None,
-                    "tone": "neutral",
-                    "language": self.current_language.value,
-                    "reply": stop_msg
-                }
-            elif interruption_type == InterruptionType.SKIP:
-                current_field = self.get_next_field()
-                if current_field and not current_field.validation.required:
-                    # Skip the field
-                    field_key = self._get_field_key(current_field.name)
-                    self.session.update_field(field_key, None, FieldStatus.COLLECTED)
-                    
-                    next_field = self.get_next_field()
-                    if next_field:
-                        skip_msg = f"છોડ્યું. {self._generate_field_question_text(next_field)}" if self.current_language == Language.GUJARATI else f"Skipped. {self._generate_field_question_text(next_field)}"
-                        return {
-                            "action": "ask",
-                            "updates": {},
-                            "ask": skip_msg,
-                            "field_focus": next_field.name,
-                            "tone": "friendly",
-                            "language": self.current_language.value,
-                            "reply": skip_msg
-                        }
-                    else:
-                        done_msg = f"પૂર્ણ! {self.form_schema.confirmation_message}" if self.current_language == Language.GUJARATI else f"Complete! {self.form_schema.confirmation_message}"
-                        return {
-                            "action": "done",
-                            "updates": {},
-                            "ask": done_msg,
-                            "field_focus": None,
-                            "tone": "success",
-                            "language": self.current_language.value,
-                            "reply": done_msg
-                        }
         
         # Check for form submission commands
         submission_commands = {
@@ -675,18 +625,6 @@ class EnhancedDynamicFormConversation:
                 clean_question = field_question.strip()
                 full_message = f"{clean_greeting}\n\n{clean_question}"
                 
-                # Start enhanced silence detection with intelligent context
-                silence_manager.start_silence_detection(
-                    self.session.session_id,
-                    self._silence_callback,
-                    clean_question,
-                    context={
-                        "field_name": first_field.name,
-                        "field_type": first_field.type.value,
-                        "awaiting_field_response": True
-                    }
-                )
-                
                 return {
                     "action": "ask",
                     "updates": {},
@@ -699,205 +637,146 @@ class EnhancedDynamicFormConversation:
                 }
         
         # Process normal input
-        return self._process_normal_input(user_text)
-    
+        return self._process_normal_input(user_text)    
     def _process_normal_input(self, user_text: str) -> Dict[str, Any]:
-        """Process normal conversational input"""
+        """Process normal conversational input, handling corrections and current field answers simultaneously."""
         try:
-            # First check if this is a field correction
-            correction_field = self._detect_field_correction(user_text)
+            validated_updates = {}
+            correction_confirmation = ""
+            correction_field_name = None
+
+            # Step 1: Detect and process any field corrections in the input.
+            detected_correction_field = self._detect_field_correction(user_text)
             
-            if correction_field:
-                logger.info(f"Field correction detected for: {correction_field}")
+            if detected_correction_field:
+                correction_field_name = detected_correction_field
+                logger.info(f"Multi-intent: Field correction detected for: {correction_field_name}")
                 
-                # Build context specifically for correction
-                context = self._build_correction_context(user_text, correction_field)
-                
-                # Get LLM response for correction
-                self._rate_limit()
-                response = self.model.generate_content(
-                    json.dumps(context, indent=2),
-                    generation_config={
-                        "temperature": 0.2,  # Lower temperature for corrections
-                        "top_p": 0.8,
-                        "max_output_tokens": 1024
-                    }
-                )
-                
-                if response and response.text:
-                    llm_response = self._parse_llm_response(response.text)
-                    llm_response["correction_detected"] = True
-                    
-                    # Process the correction
-                    return self._process_field_correction(llm_response, correction_field, user_text)
-            
-            # Normal processing
+                field_schema = self._find_field_schema(correction_field_name)
+                if field_schema:
+                    corrected_value = self._extract_corrected_value(user_text, field_schema)
+                    if corrected_value:
+                        validation_result = self._validate_field_value(field_schema, corrected_value)
+                        
+                        if validation_result.is_valid:
+                            # Correction is valid, update session and prepare confirmation.
+                            field_key = self._get_field_key(correction_field_name)
+                            self.session.update_field(field_key, validation_result.cleaned_value, FieldStatus.COLLECTED)
+                            validated_updates[correction_field_name] = validation_result.cleaned_value
+                            
+                            if self.current_language == Language.GUJARATI:
+                                correction_confirmation = f"સુધાર્યું! તમારું {field_schema.label} હવે '{validation_result.cleaned_value}' તરીકે નોંધાયું છે."
+                            else:
+                                correction_confirmation = f"Corrected! Your {field_schema.label} is now recorded as '{validation_result.cleaned_value}'."
+                        else:
+                            # If correction validation fails, stop and ask for clarification.
+                            error_msg = f"{validation_result.error_message} {validation_result.suggestion}"
+                            return {
+                                "action": "ask",
+                                "updates": {},
+                                "ask": error_msg,
+                                "field_focus": correction_field_name,
+                                "tone": "helpful",
+                                "language": self.current_language.value,
+                                "reply": error_msg,
+                                "correction_detected": True
+                            }
+
+            # Step 2: Continue to process the input for the current field.
             current_field = self.get_next_field()
             
-            # Build context for LLM
-            context = self._build_llm_context(user_text, current_field)
+            # Build context for LLM, including info about any correction made.
+            context = self._build_llm_context(user_text, current_field, correction_made=bool(correction_confirmation))
+            
+            # Check for and inject clarification context
+            form_context_key = self._get_form_context_key()
+            clarification_context = self.session.context[form_context_key].get("clarification_context", {})
+            if clarification_context and clarification_context.get("field_name") == current_field.name:
+                # User is responding to a clarification question.
+                # Combine the previous context with the new answer.
+                original_input = clarification_context.get("original_input", "")
+                # A simple heuristic to combine: use original for day/month, new for year.
+                # This is specific to the year-correction scenario.
+                if re.fullmatch(r'\d{4}', user_text.strip()): # If user just provides a 4-digit year
+                    # Extract day and month from original input
+                    day_month_match = re.search(r'(\d{1,2}\s+[A-Za-z\u0A80-\u0AFF]+)', original_input)
+                    if day_month_match:
+                        user_text = f"{day_month_match.group(1)} {user_text.strip()}"
+                        logger.info(f"Reconstructed date from clarification: {user_text}")
             
             # Get LLM response
             self._rate_limit()
             response = self.model.generate_content(
                 json.dumps(context, indent=2),
                 generation_config={
-                    "temperature": 0.3,
-                    "top_p": 0.9,
-                    "max_output_tokens": 2048
+                    "temperature": 0.3, "top_p": 0.9, "max_output_tokens": 2048
                 }
             )
             
             if not response or not response.text:
                 raise Exception("Empty response from LLM")
             
-            # Parse LLM response
             llm_response = self._parse_llm_response(response.text)
             
-            # Process field updates with enhanced validation
-            return self._process_field_updates(llm_response, current_field)
+            # If LLM asks for clarification, store the context for the next turn.
+            if llm_response.get("action") == "clarify":
+                self.session.context[form_context_key]["clarification_context"] = {
+                    "field_name": current_field.name,
+                    "original_input": user_text,
+                    "asked_at": time.time()
+                }
+            else:
+                self.session.context[form_context_key]["clarification_context"] = {} # Clear context
+            
+            # Merge updates from correction step with LLM updates
+            llm_updates = llm_response.get("updates", {})
+            llm_updates.update(validated_updates)
+            llm_response["updates"] = llm_updates
+            
+            processed_response = self._process_field_updates(llm_response, current_field)
+            
+            # Prepend correction confirmation to the final response text
+            if correction_confirmation:
+                processed_response["ask"] = f"{correction_confirmation} {processed_response.get('ask', '')}".strip()
+                processed_response["reply"] = f"{correction_confirmation} {processed_response.get('reply', '')}".strip()
+                processed_response["correction_detected"] = True
+
+            return processed_response
             
         except Exception as e:
             logger.error(f"Input processing error: {e}")
             error_msg = "માફ કરશો, તકનીકી સમસ્યા છે. કૃપા કરીને ફરીથી પ્રયાસ કરો." if self.current_language == Language.GUJARATI else "Sorry, I'm having a technical issue. Please try again."
+            current_field_name = None
+            if 'current_field' in locals() and current_field:
+                current_field_name = current_field.name
             return {
                 "action": "error",
                 "updates": {},
                 "ask": error_msg,
-                "field_focus": current_field.name if 'current_field' in locals() and current_field else None,
+                "field_focus": current_field_name,
                 "tone": "apologetic",
                 "language": self.current_language.value,
                 "reply": error_msg
             }
 
-    def _build_correction_context(self, user_input: str, field_name: str) -> Dict[str, Any]:
-        """Build context specifically for field correction"""
-        form_context_key = self._get_form_context_key()
-        
-        # Get the field being corrected
-        target_field = next((f for f in self.form_schema.fields if f.name == field_name), None)
-        if not target_field:
-            return self._build_llm_context(user_input, None)
-        
-        field_key = self._get_field_key(field_name)
-        current_value = self.session.fields.get(field_key, {}).value if field_key in self.session.fields else None
-        
-        return {
-            "correction_mode": True,
-            "target_field": {
-                "name": target_field.name,
-                "type": target_field.type.value,
-                "label": target_field.label,
-                "current_value": current_value
-            },
-            "user_correction": user_input,
-            "language": self.current_language.value,
-            "form_info": {
-                "title": self.form_schema.title,
-                "description": self.form_schema.description
-            },
-            "instructions": f"User is correcting the field '{field_name}'. Extract the new correct value from their input and update it. Acknowledge the correction politely."
-        }
-
-    def _process_field_correction(self, llm_response: Dict[str, Any], field_name: str, user_text: str) -> Dict[str, Any]:
-        """Process a field correction"""
-        try:
-            # Extract new value from user input using field-specific logic
-            field_schema = next((f for f in self.form_schema.fields if f.name == field_name), None)
-            if not field_schema:
-                return llm_response
-            
-            # Try to extract the corrected value
-            corrected_value = self._extract_corrected_value(user_text, field_schema)
-            
-            if corrected_value:
-                # Validate the corrected value
-                validation_result = self._validate_field_value(field_schema, corrected_value)
-                
-                if validation_result.is_valid:
-                    # Update the field
-                    field_key = self._get_field_key(field_name)
-                    self.session.update_field(field_key, validation_result.cleaned_value, FieldStatus.COLLECTED)
-                    
-                    # Generate confirmation message
-                    if self.current_language == Language.GUJARATI:
-                        confirmation = f"સુધાર્યું! તમારું {field_schema.label} હવે '{validation_result.cleaned_value}' તરીકે નોંધાયું છે."
-                    else:
-                        confirmation = f"Corrected! Your {field_schema.label} is now recorded as '{validation_result.cleaned_value}'."
-                    
-                    # Continue with next field
-                    next_field = self.get_next_field()
-                    if next_field:
-                        next_question = self._generate_field_question_text(next_field)
-                        full_message = f"{confirmation} {next_question}"
-                        
-                        return {
-                            "action": "correct",
-                            "updates": {field_name: validation_result.cleaned_value},
-                            "ask": full_message,
-                            "field_focus": next_field.name,
-                            "tone": "confirmation",
-                            "language": self.current_language.value,
-                            "reply": full_message,
-                            "correction_detected": True
-                        }
-                    else:
-                        done_msg = f"{confirmation} બધું પૂર્ણ!" if self.current_language == Language.GUJARATI else f"{confirmation} All done!"
-                        return {
-                            "action": "done",
-                            "updates": {field_name: validation_result.cleaned_value},
-                            "ask": done_msg,
-                            "field_focus": None,
-                            "tone": "success",
-                            "language": self.current_language.value,
-                            "reply": done_msg,
-                            "correction_detected": True
-                        }
-                else:
-                    # Validation failed
-                    error_msg = f"{validation_result.error_message} {validation_result.suggestion}"
-                    return {
-                        "action": "ask",
-                        "updates": {},
-                        "ask": error_msg,
-                        "field_focus": field_name,
-                        "tone": "helpful",
-                        "language": self.current_language.value,
-                        "reply": error_msg,
-                        "correction_detected": True
-                    }
-            
-            # If we couldn't extract the value, ask for clarification
-            clarify_msg = "માફ કરશો, મને સાચી માહિતી સમજાઈ નથી. કૃપા કરીને ફરીથી કહો." if self.current_language == Language.GUJARATI else "Sorry, I didn't understand the correct information. Please tell me again."
-            
-            return {
-                "action": "clarify",
-                "updates": {},
-                "ask": clarify_msg,
-                "field_focus": field_name,
-                "tone": "apologetic",
-                "language": self.current_language.value,
-                "reply": clarify_msg,
-                "correction_detected": True
-            }
-            
-        except Exception as e:
-            logger.error(f"Field correction processing failed: {e}")
-            return llm_response
-
     def _extract_corrected_value(self, user_text: str, field: FormField) -> Optional[str]:
         """Extract corrected value from user input based on field type"""
         if field.type == FieldType.SHORT_ANSWER and "name" in field.name.lower():
-            # Extract name patterns
+            # Enhanced patterns to find the new name, avoiding the negation part.
+            # Looks for "my name is [new name]" after a negation like "is not [old name]".
             patterns = [
-                r"મારું નામ (.+?) છે",
-                r"my name is (.+?)$",
-                r"call me (.+?)$",
-                r"નામ (.+?) છે",
-                r"name (.+?)$"
+                # Gujarati: "મારું નામ [old] નથી મારું નામ [new] છે"
+                r"નથી\s+મારું\s+નામ\s+([A-Za-z\u0A80-\u0AFF\s\-\'\.]+?)\s+છે",
+                # English: "my name is not [old] my name is [new]"
+                r"is\s+not\s+.+?\s+my\s+name\s+is\s+([A-Za-z\s\-\'\.]+?)$",
+                # General positive assertion, useful if the above fails
+                r"મારું\s+નામ\s+([A-Za-z\u0A80-\u0AFF\s\-\'\.]+?)\s+છે",
+                r"my\s+name\s+is\s+([A-Za-z\s\-\'\.]+?)$",
+                r"call\s+me\s+([A-Za-z\s\-\'\.]+?)$"
             ]
             
             for pattern in patterns:
+                # Find all matches and return the last one, which is most likely the new name.
                 match = re.search(pattern, user_text, re.IGNORECASE)
                 if match:
                     return match.group(1).strip()
@@ -951,7 +830,7 @@ class EnhancedDynamicFormConversation:
         
         return None
 
-    def _build_llm_context(self, user_input: str, current_field: Optional[FormField]) -> Dict[str, Any]:
+    def _build_llm_context(self, user_input: str, current_field: Optional[FormField], correction_made: bool = False) -> Dict[str, Any]:
         """Build comprehensive context for LLM including conditional fields"""
         form_context_key = self._get_form_context_key()
         
@@ -1004,9 +883,11 @@ class EnhancedDynamicFormConversation:
                             "parent_value": field_state.value
                         }
         
+        # Get the current date in a consistent format (UTC)
+        current_date_utc = dt.datetime.now(dt.timezone.utc).strftime('%B %d, %Y')
+
         return {
-            "form_info": {
-                "title": self.form_schema.title,
+            "form_info": { "title": self.form_schema.title,
                 "description": self.form_schema.description
             },
             "field_states": field_states,
@@ -1015,23 +896,31 @@ class EnhancedDynamicFormConversation:
             "conversation_history": self.session.get_conversation_context(10),
             "form_context": self.session.context.get(form_context_key, {}),
             "completion_status": self.get_completion_status(),
-            "language": self.current_language.value,
+            "current_date": current_date_utc, # Inject current date
+            "language": self.current_language.value, # Keep for backward compatibility
             "current_language": self.current_language.value
         }
+        
+        if correction_made:
+            context["correction_made"] = True
+            context["instructions"] = "A previous field was just corrected. Now, extract information for the `current_field` from the user's input."
+        return context
     
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
         """Parse LLM JSON response with fallback handling"""
         try:
-            return json.loads(response_text.strip())
+            # First, strip markdown code block fences if they exist
+            clean_text = re.sub(r'^```json\s*|\s*```$', '', response_text.strip(), flags=re.DOTALL)
+            return json.loads(clean_text)
         except json.JSONDecodeError:
             pass
         
         # Try to find JSON in the text
-        json_patterns = [r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', r'\{.*\}']
+        json_patterns = [r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}']
         
         for pattern in json_patterns:
             matches = re.findall(pattern, response_text, re.DOTALL)
-            for match in matches:
+            for match in reversed(matches): # Check last match first, often the most complete
                 try:
                     return json.loads(match)
                 except json.JSONDecodeError:
@@ -1125,9 +1014,6 @@ class EnhancedDynamicFormConversation:
                 "reply": done_msg
             })
             
-            # Stop silence monitoring
-            silence_manager.stop_session(self.session.session_id)
-            
         elif validated_updates:
             # FIXED: Always move to next field when we have updates, regardless of LLM action
             llm_response["action"] = "ask"  # Ensure we continue asking
@@ -1158,19 +1044,6 @@ class EnhancedDynamicFormConversation:
                 llm_response["reply"] = llm_response["ask"]
                 llm_response["tone"] = "friendly"
                 
-                # Update silence manager with new field context
-                silence_manager.start_silence_detection(
-                    self.session.session_id,
-                    self._silence_callback,
-                    llm_response["ask"],
-                    context={
-                        "field_name": next_field.name,
-                        "field_type": next_field.type.value,
-                        "awaiting_field_response": True,
-                        "is_conditional": is_conditional_field
-                    }
-                )
-        
         # Ensure reply is set
         if not llm_response.get("reply"):
             llm_response["reply"] = llm_response.get("ask", "")
@@ -1566,18 +1439,6 @@ class EnhancedDynamicFormConversation:
         }
         
         return field_translations.get(field.name, f"{field.label} શું છે?")
-    
-    def _silence_callback(self, session_id: str, prompt_message: str, language: Language):
-        """Callback for silence manager prompts - repeats questions after timeout"""
-        logger.info(f"🔄 Silence prompt for {session_id}: {prompt_message}")
-        
-        # Add system message for silence prompt  
-        self.session.add_message(MessageRole.SYSTEM, f"Silence prompt: {prompt_message}")
-        
-        # This callback is triggered by the silence manager when user doesn't respond
-        # The silence manager should be integrated with the main chat flow to repeat questions
-        # For now, log the prompt - the frontend will handle the actual TTS via the /silence-prompt endpoint
-        self.session.add_message(MessageRole.SYSTEM, f"Silence prompt: {prompt_message}")
     
     def _rate_limit(self):
         """Simple rate limiting"""

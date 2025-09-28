@@ -19,6 +19,16 @@ class EnhancedDateParser:
         self.month_abbrev = {month.lower(): idx for idx, month in enumerate(calendar.month_abbr[1:], 1)}
         self.all_months = {**self.month_names, **self.month_abbrev}
         
+        # Relative date mappings for English and Gujarati
+        self.relative_date_mappings = {
+            "today": 0,
+            "આજે": 0,
+            "yesterday": -1,
+            "ગઈકાલે": -1,
+            "tomorrow": 1,
+            "આવતીકાલે": 1,
+        }
+        
         # Ordinal suffixes
         self.ordinal_pattern = r'(\d{1,2})(st|nd|rd|th)?'
         
@@ -67,12 +77,21 @@ class EnhancedDateParser:
         if not date_str or not date_str.strip():
             return None
         
-        cleaned = date_str.strip().lower()
-        logger.info(f"Parsing date: '{date_str}' -> cleaned: '{cleaned}'")
+        cleaned_str = date_str.strip().lower()
+        logger.info(f"Parsing date: '{date_str}' -> cleaned: '{cleaned_str}'")
         
+        # Check for relative dates first (e.g., "yesterday", "ગઈકાલે")
+        for word, day_delta in self.relative_date_mappings.items():
+            if word in cleaned_str:
+                # Use timezone-aware UTC to get a consistent 'today'
+                target_date = dt.datetime.now(dt.timezone.utc).date() + dt.timedelta(days=day_delta)
+                logger.info(f"Parsed relative date '{word}' to {target_date}")
+                # The rest of the validation will be handled by the calling function
+                return (target_date.year, target_date.month, target_date.day)
+
         # Try each pattern
         for pattern, pattern_type in self.date_patterns:
-            match = re.search(pattern, cleaned, re.IGNORECASE)
+            match = re.search(pattern, cleaned_str, re.IGNORECASE)
             if match:
                 try:
                     groups = match.groups()
@@ -80,11 +99,12 @@ class EnhancedDateParser:
                     
                     if day and month and year:
                         # Validate the date
-                        if self._validate_date_components(year, month, day):
+                        is_valid, reason = self._validate_date_components(year, month, day)
+                        if is_valid:
                             logger.info(f"Successfully parsed: {year}-{month:02d}-{day:02d}")
                             return (year, month, day)
                         else:
-                            logger.warning(f"Invalid date components: {year}-{month}-{day}")
+                            logger.warning(f"Invalid date components: {year}-{month}-{day}, Reason: {reason}")
                             continue
                 
                 except (ValueError, IndexError, KeyError) as e:
@@ -144,28 +164,33 @@ class EnhancedDateParser:
         
         return day, month, year
     
-    def _validate_date_components(self, year: int, month: int, day: int) -> bool:
-        """Validate that the date components form a valid date"""
+    def _validate_date_components(self, year: int, month: int, day: int) -> Tuple[bool, str]:
+        """Validate that the date components form a valid date, returning a reason for failure."""
         try:
             # Basic range checks
             if not (1 <= month <= 12):
-                return False
+                return False, "invalid_month"
             if not (1 <= day <= 31):
-                return False
-            if not (1900 <= year <= dt.datetime.now().year + 10):
-                return False
+                return False, "invalid_day"
+            
+            # More flexible year validation
+            current_year = dt.datetime.now().year
+            if not (current_year - 150 <= year <= current_year + 1):
+                if year > current_year:
+                    return False, "future_year"
+                else:
+                    return False, "past_year_too_early"
             
             # Check if the date actually exists (handles leap years, month lengths)
-            dt.date(year, month, day)
+            parsed_date = dt.date(year, month, day)
             
-            # Don't allow future dates for birth dates (reasonable assumption)
-            if dt.date(year, month, day) > dt.date.today():
-                return False
+            if parsed_date > dt.date.today():
+                return False, "future_date"
             
-            return True
+            return True, "valid"
             
         except ValueError:
-            return False
+            return False, "invalid_date_combination"
     
     def format_date(self, year: int, month: int, day: int, format_type: str = "MM/dd/yyyy") -> str:
         """Format date components into specified format"""
@@ -188,6 +213,24 @@ class EnhancedDateParser:
             year, month, day = parsed
             return self.format_date(year, month, day, format_type)
         return None
+
+    def parse_and_validate(self, date_str: str, format_type: str = "MM/dd/yyyy") -> Tuple[Optional[str], Optional[str]]:
+        """
+        Parse date string, validate it, and return formatted date or an error reason.
+        Returns (formatted_date, None) on success, or (None, error_reason) on failure.
+        """
+        if not date_str or not date_str.strip():
+            return None, "empty_input"
+
+        parsed_components = self.parse_date(date_str)
+        if parsed_components:
+            year, month, day = parsed_components
+            is_valid, reason = self._validate_date_components(year, month, day)
+            if is_valid:
+                return self.format_date(year, month, day, format_type), None
+            else:
+                return None, reason
+        return None, "unrecognized_format"
 
 # Global instance
 enhanced_date_parser = EnhancedDateParser()

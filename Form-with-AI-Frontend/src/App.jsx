@@ -29,81 +29,23 @@ function App() {
   const [showFormManager, setShowFormManager] = useState(true); // Start with form manager
   
   // Enhanced phone call experience state
-  const [isPhoneCallMode, setIsPhoneCallMode] = useState(false);
-  const [interruptionMode, setInterruptionMode] = useState(false);
-  const [isInterrupted, setIsInterrupted] = useState(false);
+  const [isPhoneCallMode, setIsPhoneCallMode] = useState(false); // Simplified phone mode
   
   // Session Management - Generate unique session IDs for each form
   const [sessionId, setSessionId] = useState(() => 
     `form_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
   );
   
-  // Silence detection for 5-second timeout
-  const [lastUserActivity, setLastUserActivity] = useState(Date.now());
-  
   const initialized = useRef(false);
   const currentAudio = useRef(null);
   const activeRecognition = useRef(null);
-  const phoneCallTimer = useRef(null);
-  const interruptionRecognition = useRef(null);
   const microphoneState = useRef("idle"); // Track microphone state
-  const silenceTimeoutRef = useRef(null); // Track silence timeout
 
   const b64ToBlob = (b64, mime) => {
     const bytes = atob(b64);
     const arr = new Uint8Array(bytes.length);
     for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
     return new Blob([arr], { type: mime });
-  };
-
-  // Silence detection - check for user inactivity after 5 seconds
-  const checkForSilence = async () => {
-    if (!currentForm || isPlaying || status.includes("listening")) {
-      return; // Don't check silence if not in conversation, AI is speaking, or user is speaking
-    }
-
-    try {
-      const response = await fetchWithNgrokHeader(`${API}/silence-prompt?session_id=${sessionId}&language=${language}`);
-      if (response.ok) {
-        const data = await response.json();
-        if (data.status === "success" && data.audio_b64) {
-          console.log("🔄 Playing silence prompt:", data.message);
-          setMessages(prev => [
-            ...prev,
-            {
-              text: data.message,
-              who: "agent",
-              timestamp: new Date().toISOString(),
-              isInfo: true,
-              tone: "prompt"
-            }
-          ]);
-          await playBase64WavOrFallback(data.audio_b64, data.message);
-        }
-      }
-    } catch (error) {
-      console.error("Silence prompt failed:", error);
-    }
-  };
-
-  // Start silence timeout when conversation is waiting for user response
-  const startSilenceTimeout = () => {
-    if (silenceTimeoutRef.current) {
-      clearTimeout(silenceTimeoutRef.current);
-    }
-    
-    silenceTimeoutRef.current = setTimeout(() => {
-      checkForSilence();
-    }, 5000); // 5 seconds as requested
-  };
-
-  // Clear silence timeout when user is active
-  const clearSilenceTimeout = () => {
-    if (silenceTimeoutRef.current) {
-      clearTimeout(silenceTimeoutRef.current);
-      silenceTimeoutRef.current = null;
-    }
-    setLastUserActivity(Date.now());
   };
 
   const speakText = (text) => {
@@ -115,49 +57,6 @@ function App() {
     utterance.rate = 0.9;
     utterance.pitch = 1.0;
     window.speechSynthesis.speak(utterance);
-  };
-
-  // Enhanced interruption detection with better patterns
-  const detectInterruption = (text, currentLang) => {
-    if (!text || text.length < 2) return false;
-    
-    const textLower = text.toLowerCase().trim();
-    
-    // Enhanced interruption commands for both languages
-    const interruptionCommands = {
-      en: [
-        "stop", "pause", "wait", "hold", "hold on", "wait a minute",
-        "stop talking", "pause please", "hold please", "one moment",
-        "wait wait", "stop stop", "pause pause", "skip", "next", 
-        "move on", "skip this", "enough"
-      ],
-      gu: [
-        "બંધ કરો", "રોકો", "થોભો", "રાહ", "રાહ જુઓ", "એક મિનિટ",
-        "બોલવાનું બંધ કરો", "કૃપા કરીને રોકો", "થોભો પ્લીઝ", "એક ક્ષણ",
-        "રાહ રાહ", "બંધ બંધ", "રોકો રોકો", "છોડો", "આગળ", "આ છોડો"
-      ]
-    };
-    
-    // Check current language first
-    const currentCommands = interruptionCommands[currentLang] || interruptionCommands.en;
-    for (const command of currentCommands) {
-      if (textLower.includes(command)) {
-        console.log(`🛑 Interruption detected (${currentLang}):`, command);
-        return true;
-      }
-    }
-    
-    // Check other language as fallback
-    const otherLang = currentLang === "en" ? "gu" : "en";
-    const otherCommands = interruptionCommands[otherLang] || [];
-    for (const command of otherCommands) {
-      if (textLower.includes(command)) {
-        console.log(`🛑 Interruption detected (${otherLang}):`, command);
-        return true;
-      }
-    }
-    
-    return false;
   };
 
   // Enhanced phone call experience with better audio handling
@@ -183,10 +82,6 @@ function App() {
       currentAudio.current = audio;
       setIsPlaying(true);
       setIsPhoneCallMode(true);
-      setIsInterrupted(false);
-
-      // Start phone call mode - activate microphone for interruptions
-      startPhoneCallMode();
 
       await audio.play();
       setPendingAudio(null);
@@ -195,14 +90,10 @@ function App() {
       audio.addEventListener('ended', () => {
         setIsPlaying(false);
         currentAudio.current = null;
-        
-        // Only auto-start if not interrupted
-        if (!isInterrupted) {
-          setTimeout(() => {
-            console.log("🎙️ Phone call mode: Auto-starting microphone after TTS");
-            handleMic(true); // Pass true to indicate auto-start
-          }, 300);
-        }
+        setTimeout(() => {
+          console.log("🎙️ Phone call mode: Auto-starting microphone after TTS");
+          handleMic(true); // Pass true to indicate auto-start
+        }, 300);
       });
 
       setTimeout(() => URL.revokeObjectURL(url), 2000);
@@ -217,18 +108,14 @@ function App() {
         utterance.pitch = 1.0;
         
         setIsPhoneCallMode(true);
-        setIsInterrupted(false);
-        startPhoneCallMode();
         
         // Phone call mode for speech synthesis
         utterance.onend = () => {
           setIsPlaying(false);
-          if (!isInterrupted) {
-            setTimeout(() => {
-              console.log("🎙️ Phone call mode: Auto-starting microphone after speech synthesis");
-              handleMic(true);
-            }, 300);
-          }
+          setTimeout(() => {
+            console.log("🎙️ Phone call mode: Auto-starting microphone after speech synthesis");
+            handleMic(true);
+          }, 300);
         };
         
         setIsPlaying(true);
@@ -237,161 +124,21 @@ function App() {
     }
   };
 
-  // Enhanced phone call mode with better interruption handling
-  const startPhoneCallMode = () => {
-    if (interruptionMode) return; // Already active
-    
-    setInterruptionMode(true);
-    console.log("📞 Phone call mode activated - listening for interruptions");
-    
-    // Start background listening for interruptions
-    startInterruptionListening();
-  };
-
   // Stop phone call mode with cleanup
   const stopPhoneCallMode = () => {
     setIsPhoneCallMode(false);
-    setInterruptionMode(false);
-    setIsInterrupted(false);
-    
-    if (interruptionRecognition.current) {
-      interruptionRecognition.current.stop();
-      interruptionRecognition.current = null;
-    }
     
     if (activeRecognition.current) {
       activeRecognition.current.stop();
       activeRecognition.current = null;
     }
     
-    if (phoneCallTimer.current) {
-      clearTimeout(phoneCallTimer.current);
-      phoneCallTimer.current = null;
-    }
-    
     microphoneState.current = "idle";
     console.log("📞 Phone call mode deactivated");
   };
 
-  // Enhanced background interruption listening
-  const startInterruptionListening = () => {
-    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Rec || interruptionRecognition.current) return;
-
-    const rec = new Rec();
-    rec.lang = language === "gu" ? "gu-IN" : "en-US";
-    rec.interimResults = true;
-    rec.continuous = true;
-    rec.maxAlternatives = 1;
-
-    interruptionRecognition.current = rec;
-    
-    let interruptionDetected = false;
-    let speechBuffer = "";
-
-    rec.onresult = (e) => {
-      let currentTranscript = "";
-      
-      for (let i = 0; i < e.results.length; i++) {
-        const transcript = e.results[i][0].transcript;
-        const confidence = e.results[i][0].confidence;
-        
-        if (confidence > 0.5 || e.results[i].isFinal) {
-          currentTranscript += transcript;
-        }
-      }
-      
-      speechBuffer = currentTranscript.trim();
-      
-      // Enhanced interruption detection
-      if (speechBuffer.length > 2 && !interruptionDetected) {
-        if (detectInterruption(speechBuffer, language)) {
-          console.log("🛑 Interruption detected:", speechBuffer);
-          interruptionDetected = true;
-          setIsInterrupted(true);
-          
-          // Stop AI audio immediately
-          if (currentAudio.current) {
-            currentAudio.current.pause();
-            currentAudio.current = null;
-          }
-          if (window.speechSynthesis.speaking) {
-            window.speechSynthesis.cancel();
-          }
-          
-          setIsPlaying(false);
-          
-          // Process interruption
-          processInterruption(speechBuffer);
-          
-          // Stop this recognition session
-          rec.stop();
-        }
-      }
-    };
-
-    rec.onerror = (e) => {
-      console.warn("Interruption listening error:", e.error);
-      if (e.error !== 'aborted' && interruptionMode) {
-        // Restart interruption listening if error and still in phone call mode
-        setTimeout(() => {
-          if (interruptionMode) {
-            startInterruptionListening();
-          }
-        }, 1000);
-      }
-    };
-
-    rec.onend = () => {
-      interruptionRecognition.current = null;
-      // Restart if still in phone call mode and no interruption
-      if (interruptionMode && !interruptionDetected) {
-        setTimeout(() => {
-          if (interruptionMode) {
-            startInterruptionListening();
-          }
-        }, 100);
-      }
-    };
-
-    try {
-      rec.start();
-      console.log("🎙️ Interruption listening started");
-    } catch (err) {
-      console.error("Failed to start interruption listening:", err);
-    }
-  };
-
-  // Enhanced interruption processing
-  const processInterruption = (interruptionText) => {
-    console.log("Processing interruption:", interruptionText);
-    
-    // Add interruption message with proper language display
-    const displayText = interruptionText;
-    
-    setMessages(prev => [
-      ...prev,
-      {
-        text: displayText,
-        who: "user",
-        timestamp: new Date().toISOString(),
-        isVoice: true,
-        isInterruption: true,
-        originalLanguage: language
-      }
-    ]);
-    
-    // Send interruption to backend
-    dynamicBackendChat(interruptionText, true, true); // Pass interruption flag
-    
-    // Stop phone call mode
-    stopPhoneCallMode();
-  };
-
   // Enhanced skip audio function
   const skipAudio = () => {
-    setIsInterrupted(true);
-    
     if (currentAudio.current) {
       currentAudio.current.pause();
       currentAudio.current = null;
@@ -462,7 +209,7 @@ function App() {
   };
 
   // Enhanced Dynamic backend chat with better language and interruption support
-  const dynamicBackendChat = async (msg, includeFormData = true, isInterruption = false) => {
+  const dynamicBackendChat = async (msg, includeFormData = true) => {
     if (!currentForm) return;
 
     // Detect language switch
@@ -479,7 +226,6 @@ function App() {
         form_id: currentForm.id,
         message: msg,
         language: newLanguage || language, // Use detected language or current
-        interruption_detected: isInterruption,
         user_language_preference: language // Send current UI language
       };
 
@@ -558,8 +304,6 @@ function App() {
 
       if (data.audio_b64 || data.reply) {
         await playBase64WavOrFallback(data.audio_b64, data.reply);
-        // Start silence timeout after AI finishes speaking
-        startSilenceTimeout();
       }
     } catch (err) {
       console.error("Dynamic chat error:", err);
@@ -581,9 +325,6 @@ function App() {
     const message = inputText.trim();
     if (!message) return;
 
-    // Clear silence timeout since user is active
-    clearSilenceTimeout();
-
     setMessages((prev) => [
       ...prev,
       {
@@ -600,9 +341,6 @@ function App() {
 
   // Enhanced microphone handling with better state management
   const handleMic = (isAutoStart = false) => {
-    // Clear silence timeout since user is starting to speak
-    clearSilenceTimeout();
-    
     const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Rec) {
       alert(
@@ -1100,7 +838,6 @@ function App() {
   useEffect(() => {
     return () => {
       stopPhoneCallMode();
-      clearSilenceTimeout();
     };
   }, []);
 
@@ -1164,18 +901,6 @@ function App() {
             {isPlaying && (
               <span className="px-3 py-1 bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 rounded-full">
                 🔊 AI Speaking...
-              </span>
-            )}
-
-            {isPhoneCallMode && (
-              <span className="px-3 py-1 bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-full">
-                📞 Phone Call Mode
-              </span>
-            )}
-
-            {interruptionMode && (
-              <span className="px-3 py-1 bg-orange-500/20 text-orange-300 border border-orange-500/30 rounded-full">
-                🎙️ Listening for Commands
               </span>
             )}
 

@@ -23,8 +23,6 @@ from .memory import memory_store, FieldStatus, MessageRole
 from .form_builder import FormSchema, FormField, FieldType, FormResponse, form_store, SAMPLE_FORMS
 from .enhanced_dynamic_chat import EnhancedDynamicFormConversation
 from .language_support import Language, language_support
-from .silence_manager import silence_manager
-from .voice_interruption import voice_interruption_handler
 from .google_tts import unified_tts_service
 
 # Configure logging
@@ -133,7 +131,6 @@ class DynamicChatRequest(BaseModel):
     message: str = Field("", max_length=1000)
     manual_form_data: Optional[Dict[str, Any]] = None  # For detecting manual field entries
     language: Optional[str] = "en"  # Language preference
-    interruption_detected: Optional[bool] = False  # Voice interruption flag
 
 class DynamicChatResponse(BaseModel):
     action: str
@@ -147,7 +144,6 @@ class DynamicChatResponse(BaseModel):
     tone: Optional[str] = None
     language: Optional[str] = "en"  # Response language
     greeting: Optional[str] = None  # Initial greeting if applicable
-    interruption_handled: Optional[bool] = False  # Whether interruption was processed
 
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500)
@@ -338,9 +334,6 @@ def reset_session(session_id: str = Query("session1", min_length=1)):
 def cleanup_session(session_id: str):
     """Clean up and completely remove a session"""
     try:
-        # Stop any silence monitoring for this session
-        silence_manager.stop_session(session_id)
-        
         # Delete the session from memory store
         success = memory_store.delete_session(session_id)
         
@@ -452,18 +445,6 @@ async def dynamic_chat(req: DynamicChatRequest):
         # The conversation object is the source of truth for the language, loaded from the session.
         language = conversation.current_language
         
-        # Handle voice interruption if detected
-        if req.interruption_detected and req.message:
-            if voice_interruption_handler.should_stop_audio(req.message, language):
-                stop_msg = language_support.get_ui_text("skip_audio", language)
-                return DynamicChatResponse(
-                    action="interrupt_stop",
-                    reply=stop_msg,
-                    ask=stop_msg,
-                    language=language.value,
-                    interruption_handled=True
-                )
-        
         # Normalize user input
         raw_message = req.message.strip()
         normalized_message = enhanced_normalize_speech(raw_message)
@@ -555,8 +536,7 @@ async def dynamic_chat(req: DynamicChatRequest):
             field_focus=llm_response.get("field_focus"),
             tone=llm_response.get("tone", "friendly"),
             language=language.value,
-            greeting=llm_response.get("greeting"),
-            interruption_handled=req.interruption_detected
+            greeting=llm_response.get("greeting")
         )
         
         logger.info(f"Dynamic chat processed for session {session_id}, form {form_id}: action={response.action}, language={language.value}")
@@ -585,67 +565,6 @@ async def dynamic_chat(req: DynamicChatRequest):
             completion_status=None,
             language=language.value
         )
-
-# Enhanced silence management endpoint with question repetition
-@app.post("/silence-prompt")
-async def silence_prompt(session_id: str = Query(...), language: str = Query("en")):
-    """Handle silence prompts with enhanced question repetition system"""
-    try:
-        lang = Language.GUJARATI if language == "gu" else Language.ENGLISH
-        
-        # Check if session exists
-        session = memory_store.get_or_create_session(session_id)
-        
-        # Get session from silence manager to check repetition count
-        silence_session = silence_manager.sessions.get(session_id)
-        
-        if silence_session:
-            repetition_count = silence_session.repetition_count
-            
-            # Generate appropriate silence prompt based on repetition count
-            if repetition_count == 1:
-                if lang == Language.GUJARATI:
-                    prompt_text = "તમે ત્યાં છો?"
-                else:
-                    prompt_text = "Are you there?"
-            elif repetition_count == 2:
-                if lang == Language.GUJARATI:
-                    prompt_text = "તમે હજી પણ ત્યાં છો? કૃપા કરીને જવાબ આપો."
-                else:
-                    prompt_text = "Are you still there? Please respond."
-            else:
-                if lang == Language.GUJARATI:
-                    prompt_text = "હેલો? હું તમારા જવાબની રાહ જોઈ રહ્યો છું. શું આપણે આગળ વધીએ?"
-                else:
-                    prompt_text = "Hello? I'm waiting for your answer. Should we continue?"
-        else:
-            # Fallback if no silence session
-            if lang == Language.GUJARATI:
-                prompt_text = "તમે ત્યાં છો? કૃપા કરીને જવાબ આપો."
-            else:
-                prompt_text = "Are you there? Please respond."
-        
-        # Generate audio with enhanced multilingual TTS
-        audio_b64 = ""
-        try:
-            audio_b64 = await tts_to_base64_wav(prompt_text, lang)
-        except Exception as e:
-            logger.warning(f"Enhanced TTS generation failed for silence prompt: {e}")
-        
-        # Add system message
-        session.add_message(MessageRole.SYSTEM, f"Silence prompt: {prompt_text}")
-        
-        return {
-            "status": "success",
-            "message": prompt_text,
-            "audio_b64": audio_b64,
-            "language": language,
-            "repetition_count": silence_session.repetition_count if silence_session else 0
-        }
-        
-    except Exception as e:
-        logger.error(f"Silence prompt failed for session {session_id}: {e}")
-        return {"status": "error", "message": "Failed to generate silence prompt"}
 
 # Language support endpoints
 @app.get("/ui-translations/{language}")
