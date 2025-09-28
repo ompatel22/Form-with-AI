@@ -159,20 +159,17 @@ class LanguageSupport:
             "મને અંગ્રેજી જોઈએ", "i want english", "can you speak english"
         ]
         
-        # Check for language switching commands
-        if current_language == Language.ENGLISH:
-            # Check if user wants to switch to Gujarati
-            for pattern in english_to_gujarati:
-                if pattern in text_lower:
-                    logger.info(f"Detected English→Gujarati switch command: '{text}'")
-                    return Language.GUJARATI
+        # Check if user wants to switch to Gujarati, regardless of current language state
+        for pattern in english_to_gujarati:
+            if pattern in text_lower:
+                logger.info(f"Detected switch command for Gujarati: '{text}'")
+                return Language.GUJARATI
         
-        elif current_language == Language.GUJARATI:
-            # Check if user wants to switch to English
-            for pattern in gujarati_to_english:
-                if pattern in text_lower:
-                    logger.info(f"Detected Gujarati→English switch command: '{text}'")
-                    return Language.ENGLISH
+        # Check if user wants to switch to English, regardless of current language state
+        for pattern in gujarati_to_english:
+            if pattern in text_lower:
+                logger.info(f"Detected switch command for English: '{text}'")
+                return Language.ENGLISH
         
         return None
     

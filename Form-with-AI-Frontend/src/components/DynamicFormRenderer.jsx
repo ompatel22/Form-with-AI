@@ -140,33 +140,45 @@ const DynamicFormRenderer = ({ formSchema, formData, onChange, onSubmit }) => {
           </div>
         );
 
-case 'date':
-      // Convert MM/DD/YYYY to YYYY-MM-DD for date input
-      const displayValue = value
-        ? (() => {
-            const [month, day, year] = value.split('/');
-            return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-          })()
-        : '';
-      return (
-        <input
-          type="date"
-          name={field.name}
-          value={displayValue}
-          onChange={(e) => {
-            // Convert YYYY-MM-DD back to MM/DD/YYYY for formData
-            const dateValue = e.target.value;
-            if (dateValue) {
-              const [year, month, day] = dateValue.split('-');
-              handleFieldChange(field.name, `${month}/${day}/${year}`);
-            } else {
-              handleFieldChange(field.name, '');
+      case 'date': {
+        // Convert MM/DD/YYYY to YYYY-MM-DD for date input, with robust parsing
+        const displayValue = (() => {
+          if (!value || typeof value !== 'string') return '';
+
+          const parts = value.split('/');
+          if (parts.length === 3) {
+            const [month, day, year] = parts;
+            if (year && month && day) {
+              const fullYear = year.length === 2 ? `20${year}` : year;
+              return `${fullYear}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
             }
-          }}
-          required={field.validation?.required}
-          className="w-full p-3 border border-gray-600 bg-gray-700 text-white placeholder-gray-400 rounded-lg focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition-shadow shadow-sm hover:shadow-md"
-        />
-      );
+          }
+          
+          // Also handle if value is already in YYYY-MM-DD
+          if (value.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            return value;
+          }
+
+          return ''; // Fallback for malformed strings
+        })();
+
+        return (
+          <div key={field.name} className="mb-6">
+            {getFieldLabel()}
+            <input
+              type="date"
+              value={displayValue}
+              onChange={(e) => {
+                const dateValue = e.target.value;
+                const [year, month, day] = dateValue.split('-');
+                handleFieldChange(field.name, dateValue ? `${month}/${day}/${year}` : '');
+              }}
+              required={isRequired}
+              className="w-full p-4 bg-gray-700 text-white border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-400 transition-all"
+            />
+          </div>
+        );
+      }
        
       case 'time':
         return (

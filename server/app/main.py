@@ -23,8 +23,6 @@ from .memory import memory_store, FieldStatus, MessageRole
 from .form_builder import FormSchema, FormField, FieldType, FormResponse, form_store, SAMPLE_FORMS
 from .enhanced_dynamic_chat import EnhancedDynamicFormConversation
 from .language_support import Language, language_support
-from .silence_manager import silence_manager
-from .voice_interruption import voice_interruption_handler
 from .google_tts import unified_tts_service
 
 # Configure logging
@@ -148,6 +146,7 @@ class DynamicChatResponse(BaseModel):
     language: Optional[str] = "en"  # Response language
     greeting: Optional[str] = None  # Initial greeting if applicable
     interruption_handled: Optional[bool] = False  # Whether interruption was processed
+    is_final: Optional[bool] = True # Flag for streaming
 
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500)
@@ -338,9 +337,6 @@ def reset_session(session_id: str = Query("session1", min_length=1)):
 def cleanup_session(session_id: str):
     """Clean up and completely remove a session"""
     try:
-        # Stop any silence monitoring for this session
-        silence_manager.stop_session(session_id)
-        
         # Delete the session from memory store
         success = memory_store.delete_session(session_id)
         
@@ -425,13 +421,10 @@ async def transcribe_audio(req: TranscribeRequest):
             detail="Transcription service error"
         )
 
-# Main dynamic chat endpoint
-@app.post("/dynamic-chat", response_model=DynamicChatResponse)
-async def dynamic_chat(req: DynamicChatRequest):
-    """Enhanced dynamic chat endpoint with multilingual and voice interruption support"""
+async def _get_conversation_response(req: DynamicChatRequest) -> Dict[str, Any]:
+    """Helper to process conversation logic and return a dictionary."""
     session_id = req.session_id
     form_id = req.form_id
-    
     try:
         # Get or create session
         session = memory_store.get_or_create_session(session_id)
@@ -451,18 +444,6 @@ async def dynamic_chat(req: DynamicChatRequest):
         conversation.set_language(language)
         # The conversation object is the source of truth for the language, loaded from the session.
         language = conversation.current_language
-        
-        # Handle voice interruption if detected
-        if req.interruption_detected and req.message:
-            if voice_interruption_handler.should_stop_audio(req.message, language):
-                stop_msg = language_support.get_ui_text("skip_audio", language)
-                return DynamicChatResponse(
-                    action="interrupt_stop",
-                    reply=stop_msg,
-                    ask=stop_msg,
-                    language=language.value,
-                    interruption_handled=True
-                )
         
         # Normalize user input
         raw_message = req.message.strip()
@@ -485,18 +466,8 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Get conversation response
         llm_response = conversation.process_user_input(normalized_message)
         
-        # Generate audio for response with enhanced multilingual support
-        audio_b64 = ""
-        reply_text = llm_response.get("reply", llm_response.get("ask", ""))
-        if reply_text:
-            try:
-                # Use language-aware TTS generation
-                audio_b64 = await tts_to_base64_wav(reply_text, language)
-            except Exception as e:
-                logger.warning(f"Enhanced TTS generation failed: {e}")
-        
         # Add agent response to session
-        if reply_text:
+        if reply_text := llm_response.get("reply", llm_response.get("ask", "")):
             session.add_message(MessageRole.AGENT, reply_text)
         
         # Get form summary and completion status
@@ -543,24 +514,11 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Log response details
         logger.info(f"Dynamic chat response: action={llm_response.get('action')}, ask='{llm_response.get('ask')}', field_focus={llm_response.get('field_focus')}, language={language.value}")
         
-        # Build enhanced response
-        response = DynamicChatResponse(
-            action=llm_response.get("action", "ask"),
-            reply=reply_text,
-            ask=llm_response.get("ask"),
-            updates=llm_response.get("updates", {}),
-            audio_b64=audio_b64,
-            form_summary=form_summary,
-            completion_status=completion_status,
-            field_focus=llm_response.get("field_focus"),
-            tone=llm_response.get("tone", "friendly"),
-            language=language.value,
-            greeting=llm_response.get("greeting"),
-            interruption_handled=req.interruption_detected
-        )
-        
-        logger.info(f"Dynamic chat processed for session {session_id}, form {form_id}: action={response.action}, language={language.value}")
-        return response
+        # Return a dictionary instead of a Pydantic model for easier manipulation
+        llm_response["form_summary"] = form_summary
+        llm_response["completion_status"] = completion_status
+        llm_response["language"] = language.value
+        return llm_response
         
     except Exception as e:
         logger.error(f"Dynamic chat processing failed for session {session_id}, form {form_id}: {e}\n{traceback.format_exc()}")
@@ -577,76 +535,54 @@ async def dynamic_chat(req: DynamicChatRequest):
         except Exception:
             pass
         
-        return DynamicChatResponse(
-            action="error",
-            reply=error_reply,
-            audio_b64=error_audio,
-            form_summary=None,
-            completion_status=None,
-            language=language.value
-        )
-
-# Enhanced silence management endpoint with question repetition
-@app.post("/silence-prompt")
-async def silence_prompt(session_id: str = Query(...), language: str = Query("en")):
-    """Handle silence prompts with enhanced question repetition system"""
-    try:
-        lang = Language.GUJARATI if language == "gu" else Language.ENGLISH
-        
-        # Check if session exists
-        session = memory_store.get_or_create_session(session_id)
-        
-        # Get session from silence manager to check repetition count
-        silence_session = silence_manager.sessions.get(session_id)
-        
-        if silence_session:
-            repetition_count = silence_session.repetition_count
-            
-            # Generate appropriate silence prompt based on repetition count
-            if repetition_count == 1:
-                if lang == Language.GUJARATI:
-                    prompt_text = "તમે ત્યાં છો?"
-                else:
-                    prompt_text = "Are you there?"
-            elif repetition_count == 2:
-                if lang == Language.GUJARATI:
-                    prompt_text = "તમે હજી પણ ત્યાં છો? કૃપા કરીને જવાબ આપો."
-                else:
-                    prompt_text = "Are you still there? Please respond."
-            else:
-                if lang == Language.GUJARATI:
-                    prompt_text = "હેલો? હું તમારા જવાબની રાહ જોઈ રહ્યો છું. શું આપણે આગળ વધીએ?"
-                else:
-                    prompt_text = "Hello? I'm waiting for your answer. Should we continue?"
-        else:
-            # Fallback if no silence session
-            if lang == Language.GUJARATI:
-                prompt_text = "તમે ત્યાં છો? કૃપા કરીને જવાબ આપો."
-            else:
-                prompt_text = "Are you there? Please respond."
-        
-        # Generate audio with enhanced multilingual TTS
-        audio_b64 = ""
-        try:
-            audio_b64 = await tts_to_base64_wav(prompt_text, lang)
-        except Exception as e:
-            logger.warning(f"Enhanced TTS generation failed for silence prompt: {e}")
-        
-        # Add system message
-        session.add_message(MessageRole.SYSTEM, f"Silence prompt: {prompt_text}")
-        
+        # Return a dictionary for the error case
         return {
-            "status": "success",
-            "message": prompt_text,
-            "audio_b64": audio_b64,
-            "language": language,
-            "repetition_count": silence_session.repetition_count if silence_session else 0
+            "action": "error",
+            "reply": error_reply,
+            "audio_b64": error_audio,
+            "language": language.value
         }
-        
-    except Exception as e:
-        logger.error(f"Silence prompt failed for session {session_id}: {e}")
-        return {"status": "error", "message": "Failed to generate silence prompt"}
 
+# Main dynamic chat endpoint with streaming
+@app.post("/dynamic-chat")
+async def dynamic_chat(req: DynamicChatRequest):
+    """
+    Enhanced dynamic chat endpoint with streaming for faster perceived response times.
+    1. Gets the full LLM response object.
+    2. Immediately sends a JSON object with the text response but no audio.
+    3. In the background, generates the audio.
+    4. Sends a second JSON object with the audio data.
+    """
+    # Get the complete response from the conversation logic first
+    response_data = await _get_conversation_response(req)
+    
+    reply_text = response_data.get("reply", response_data.get("ask", ""))
+    language = Language(response_data.get("language", "en"))
+
+    async def stream_generator():
+        # 1. Yield the initial text-only response immediately
+        text_response = response_data.copy()
+        text_response.pop("audio_b64", None) # Ensure no audio is in the first part
+        text_response["is_final"] = False
+        yield json.dumps(text_response) + "\n"
+        logger.info(f"Streamed text response for session {req.session_id}")
+
+        # 2. Generate audio in the background
+        audio_b64 = ""
+        if reply_text and response_data.get("action") != "error":
+            try:
+                audio_b64 = await tts_to_base64_wav(reply_text, language)
+                logger.info(f"Generated audio for session {req.session_id}")
+            except Exception as e:
+                logger.warning(f"TTS generation failed during stream: {e}")
+
+        # 3. Yield the final response containing only the audio
+        audio_response = {"audio_b64": audio_b64, "is_final": True, "language": language.value}
+        yield json.dumps(audio_response) + "\n"
+        logger.info(f"Streamed audio response for session {req.session_id}")
+
+    return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
+    
 # Language support endpoints
 @app.get("/ui-translations/{language}")
 def get_ui_translations(language: str):
