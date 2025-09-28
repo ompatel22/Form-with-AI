@@ -621,11 +621,21 @@ class EnhancedDynamicFormConversation:
                 field_question = self._generate_field_question_text(first_field)
                 
                 # Clean response - no JSON formatting in the message
-                clean_greeting = greeting.strip()
+                clean_greeting = greeting.strip() # Start with the raw greeting
+                
+                # **FIX**: Robustly parse the greeting in case it's a JSON string
+                if clean_greeting.lstrip().startswith('{'):
+                    try:
+                        parsed_greeting = self._parse_llm_response(clean_greeting)
+                        clean_greeting = parsed_greeting.get("response", parsed_greeting.get("ask", clean_greeting))
+                    except Exception:
+                        # If parsing fails, fall back to the original text but try to clean it
+                        clean_greeting = re.sub(r'^```json\s*|\s*```$', '', clean_greeting).strip()
+
                 clean_question = field_question.strip()
                 full_message = f"{clean_greeting}\n\n{clean_question}"
                 
-                return {
+                response = {
                     "action": "ask",
                     "updates": {},
                     "ask": full_message,
@@ -635,6 +645,13 @@ class EnhancedDynamicFormConversation:
                     "greeting": clean_greeting,
                     "reply": full_message
                 }
+
+                # Remove "response" key if it exists in the greeting
+                if "response" in response:
+                    del response["response"]
+
+                return response
+
         
         # Process normal input
         return self._process_normal_input(user_text)    
