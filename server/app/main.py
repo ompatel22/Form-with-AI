@@ -392,27 +392,42 @@ class TranscribeRequest(BaseModel):
 @app.post("/transcribe")
 async def transcribe_audio(req: TranscribeRequest):
     """Transcribe audio with language-specific STT model"""
+    import datetime
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    
     try:
+        # LOG: Request details
+        logger.info(f"[LOG] [{timestamp}] ================== TRANSCRIPTION REQUEST ==================")
+        logger.info(f"[LOG] [{timestamp}] Language requested: {req.language}")
+        
         lang = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
+        logger.info(f"[LOG] [{timestamp}] Language enum resolved to: {lang.value}")
         
         # Use language-specific STT model
+        logger.info(f"[LOG] [{timestamp}] Calling transcribe_b64 with language: {lang.value}")
         transcription = transcribe_b64(req.audio_b64, lang)
         
         if not transcription:
+            logger.error(f"[LOG] [{timestamp}] ❌ Transcription returned empty result")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Failed to transcribe audio"
             )
         
+        model_used = "vasista22/whisper-gujarati-medium" if lang == Language.GUJARATI else "whisper-english"
+        logger.info(f"[LOG] [{timestamp}] Final transcription result: '{transcription[:100]}{'...' if len(transcription) > 100 else ''}'")
+        logger.info(f"[LOG] [{timestamp}] Model used: {model_used}")
+        logger.info(f"[LOG] [{timestamp}] ================== TRANSCRIPTION COMPLETE ==================")
+        
         return {
             "status": "success",
             "transcription": transcription,
             "language": req.language,
-            "model_used": "vasista22/whisper-gujarati-medium" if lang == Language.GUJARATI else "whisper-english"
+            "model_used": model_used
         }
         
     except Exception as e:
-        logger.error(f"Transcription failed: {e}")
+        logger.error(f"[LOG] [{timestamp}] ❌ Transcription failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Transcription service error"
@@ -422,18 +437,27 @@ async def transcribe_audio(req: TranscribeRequest):
 @app.post("/dynamic-chat", response_model=DynamicChatResponse)
 async def dynamic_chat(req: DynamicChatRequest):
     """Enhanced dynamic chat endpoint with multilingual and voice interruption support"""
+    import datetime
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    
     session_id = req.session_id
     form_id = req.form_id
     
     try:
+        # LOG: Incoming request
+        logger.info(f"[LOG] [{timestamp}] ================== DYNAMIC CHAT REQUEST ==================")
+        logger.info(f"[LOG] [{timestamp}] Session ID: {session_id}")
+        logger.info(f"[LOG] [{timestamp}] Form ID: {form_id}")
+        logger.info(f"[LOG] [{timestamp}] Language requested: {req.language}")
+        logger.info(f"[LOG] [{timestamp}] Message: '{req.message[:100]}{'...' if len(req.message) > 100 else ''}'")
+        
         # Get or create session
         session = memory_store.get_or_create_session(session_id)
         
         # Log session and form details for debugging
-        logger.info(f"Dynamic chat request: session={session_id}, form={form_id}, message='{req.message}', language={req.language}")
         form = form_store.get_form(form_id)
         if not form:
-            logger.error(f"Form {form_id} not found")
+            logger.error(f"[LOG] [{timestamp}] ❌ Form {form_id} not found")
             raise HTTPException(status_code=404, detail="Form not found")
         
         # Create enhanced form-specific conversation handler
@@ -441,9 +465,14 @@ async def dynamic_chat(req: DynamicChatRequest):
         
         # Set language preference
         language = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
+        logger.info(f"[LOG] [{timestamp}] Language enum resolved to: {language.value}")
+        
         conversation.set_language(language)
+        
         # The conversation object is the source of truth for the language, loaded from the session.
         language = conversation.current_language
+        logger.info(f"[LOG] [{timestamp}] Current active language in conversation: {language.value}")
+        logger.info(f"[LOG] [{timestamp}] Session language state persisted: {session.context.get(f'form_{form_id}', {}).get('language', 'unknown')}")
         
         # Normalize user input
         raw_message = req.message.strip()
@@ -469,12 +498,19 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Generate audio for response with enhanced multilingual support
         audio_b64 = ""
         reply_text = llm_response.get("reply", llm_response.get("ask", ""))
+        logger.info(f"[LOG] [{timestamp}] Reply text for TTS: '{reply_text[:100]}{'...' if len(reply_text) > 100 else ''}'")
+        logger.info(f"[LOG] [{timestamp}] TTS will use language: {language.value}")
+        
         if reply_text:
             try:
                 # Use language-aware TTS generation
                 audio_b64 = await tts_to_base64_wav(reply_text, language)
+                if audio_b64:
+                    logger.info(f"[LOG] [{timestamp}] ✅ TTS audio generated successfully")
+                else:
+                    logger.warning(f"[LOG] [{timestamp}] ⚠️ TTS returned empty audio")
             except Exception as e:
-                logger.warning(f"Enhanced TTS generation failed: {e}")
+                logger.warning(f"[LOG] [{timestamp}] ⚠️ Enhanced TTS generation failed: {e}")
         
         # Add agent response to session
         if reply_text:
@@ -522,7 +558,10 @@ async def dynamic_chat(req: DynamicChatRequest):
                 llm_response["action"] = "error"
         
         # Log response details
-        logger.info(f"Dynamic chat response: action={llm_response.get('action')}, ask='{llm_response.get('ask')}', field_focus={llm_response.get('field_focus')}, language={language.value}")
+        logger.info(f"[LOG] [{timestamp}] Response action: {llm_response.get('action')}")
+        logger.info(f"[LOG] [{timestamp}] Response language: {language.value}")
+        logger.info(f"[LOG] [{timestamp}] Field focus: {llm_response.get('field_focus')}")
+        logger.info(f"[LOG] [{timestamp}] ================== DYNAMIC CHAT COMPLETE ==================")
         
         # Build enhanced response
         response = DynamicChatResponse(

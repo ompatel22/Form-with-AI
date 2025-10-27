@@ -1,7 +1,3 @@
-"""
-Enhanced Dynamic Conversational Form Handler with Multilingual Support
-Integrates all new features: Gujarati support, enhanced date parsing
-"""
 import json
 import re
 import time, datetime as dt
@@ -40,22 +36,18 @@ class EnhancedValidator:
             suggestion = "કૃપા કરીને તમારું પૂરું નામ કહો" if language == Language.GUJARATI else "Please tell me your full name"
             return ValidationResult(False, "", error_msg, suggestion)
         
-        # Enhanced name extraction and cleaning
         cleaned = value.strip()
         
-        # Remove common speech-to-text artifacts
         artifacts = ["my name is", "i am", "call me", "it's"] if language == Language.ENGLISH else ["મારું નામ", "હું છું", "મને કહો"]
         for artifact in artifacts:
             cleaned = re.sub(rf'{re.escape(artifact)}\s*', '', cleaned, flags=re.IGNORECASE)
         
-        # Extract name pattern - allow letters, spaces, hyphens, apostrophes, and unicode characters
         name_match = re.search(r"[A-Za-z\u0A80-\u0AFF](?:[A-Za-z\u0A80-\u0AFF\s\-\'\.])*[A-Za-z\u0A80-\u0AFF]", cleaned)
         if name_match:
             cleaned = name_match.group(0).strip()
             cleaned = re.sub(r'\s+', ' ', cleaned)
             
             if len(cleaned) >= 2:
-                # Proper case formatting for English, keep original for Gujarati
                 if language == Language.ENGLISH and not re.search(r'[\u0A80-\u0AFF]', cleaned):
                     cleaned = ' '.join(word.capitalize() for word in cleaned.split())
                 return ValidationResult(True, cleaned, "", "")
@@ -71,26 +63,20 @@ class EnhancedValidator:
             suggestion = "કૃપા કરીને તમારું ઈમેઇલ એડ્રેસ આપો" if language == Language.GUJARATI else "Please provide your email address"
             return ValidationResult(False, "", error_msg, suggestion)
         
-        # SUPER AGGRESSIVE email cleaning for speech-to-text
         cleaned = value.lower().strip()
         
-        # Handle "at the rate" patterns aggressively
+        # Enhanced email cleaning
         cleaned = re.sub(r'\bat\s*the\s*rate\b', '@', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\bat\s*rate\b', '@', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\bthe\s*rate\b', '@', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'rate\s*([a-zA-Z])', r'@\1', cleaned, flags=re.IGNORECASE)
-        
-        # Handle various speech patterns
         cleaned = re.sub(r'(\w+)\s*at\s*([a-zA-Z]+\.com)', r'\1@\2', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'(\w+)\s*(\d+)\s*at\s*([a-zA-Z]+\.com)', r'\1\2@\3', cleaned, flags=re.IGNORECASE)
-        
-        # Handle dot patterns
         cleaned = re.sub(r'\bdot\s*com\b', '.com', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\bdot\s*gmail\s*com\b', '.gmail.com', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\bgmail\s*dot\s*com\b', 'gmail.com', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'\bdot\b', '.', cleaned, flags=re.IGNORECASE)
         
-        # Handle concatenated patterns without @
         if '@' not in cleaned:
             patterns = [
                 (r'(\w+\d*)gmail', r'\1@gmail'),
@@ -101,14 +87,10 @@ class EnhancedValidator:
             for pattern, replacement in patterns:
                 cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
         
-        # Fix domain completions
         cleaned = re.sub(r'@gmail(?!\.com)', '@gmail.com', cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r'@yahoo(?!\.com)', '@yahoo.com', cleaned, flags=re.IGNORECASE)
-        
-        # Remove spaces
         cleaned = re.sub(r'\s+', '', cleaned)
         
-        # Basic email validation
         email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
         if not re.match(email_pattern, cleaned):
             if '@' not in cleaned:
@@ -131,7 +113,6 @@ class EnhancedValidator:
             suggestion = "કૃપા કરીને તમારો ફોન નમ્બર આપો" if language == Language.GUJARATI else "Please provide your phone number"
             return ValidationResult(False, "", error_msg, suggestion)
         
-        # Handle "3 times 5" -> "555", "2 times 3" -> "33"
         cleaned = value.strip()
         repeat_pattern = r'(\d+)\s*times?\s*(\d+)'
         def expand_repeats(match):
@@ -140,8 +121,6 @@ class EnhancedValidator:
             return num * times
         
         cleaned = re.sub(repeat_pattern, expand_repeats, cleaned)
-        
-        # Extract digits only
         digits = re.sub(r'\D', '', cleaned)
         
         if len(digits) < 7:
@@ -154,7 +133,6 @@ class EnhancedValidator:
             suggestion = "કૃપા કરીને માન્ય ફોન નમ્બર આપો" if language == Language.GUJARATI else "Please provide a valid phone number"
             return ValidationResult(False, "", error_msg, suggestion)
         
-        # Format for display
         if len(digits) == 10:
             formatted = f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
         elif len(digits) == 11 and digits[0] == '1':
@@ -172,13 +150,11 @@ class EnhancedValidator:
             suggestion = "કૃપા કરીને તારીખ આપો, જેમ કે 'જાન્યુઆરી 1, 2000' અથવા '01/01/2000'" if language == Language.GUJARATI else "Please provide the date, e.g., 'January 1, 2000' or '01/01/2000'"
             return ValidationResult(False, "", error_msg, suggestion)
         
-        # Use enhanced date parser
         formatted_date, error_reason = enhanced_date_parser.parse_and_validate(value.strip(), "MM/dd/yyyy")
         
         if formatted_date:
             return ValidationResult(True, str(formatted_date), "", "")
         else:
-            # Provide specific error messages based on the reason for failure
             if error_reason == "future_date" or error_reason == "future_year":
                 error_msg = "તારીખ ભવિષ્યમાં ન હોઈ શકે" if language == Language.GUJARATI else "The date cannot be in the future"
                 suggestion = "કૃપા કરીને સાચી જન્મ તારીખ આપો" if language == Language.GUJARATI else "Please provide a correct date of birth"
@@ -188,7 +164,7 @@ class EnhancedValidator:
             elif error_reason == "invalid_date_combination":
                 error_msg = "આ તારીખ અસ્તિત્વમાં નથી" if language == Language.GUJARATI else "This date does not exist"
                 suggestion = "કૃપા કરીને દિવસ, મહિનો અને વર્ષ તપાસો" if language == Language.GUJARATI else "Please check the day, month, and year"
-            else: # unrecognized_format, empty_input, etc.
+            else:
                 error_msg = "અમાન્ય તારીખ ફોર્મેટ" if language == Language.GUJARATI else "Invalid date format"
                 suggestion = ("કૃપા કરીને આ ફોર્મેટ વાપરો: 'જાન્યુઆરી 1, 2000', '01/01/2000', અથવા '22મી ડિસેમ્બર 2004'" 
                              if language == Language.GUJARATI else 
@@ -197,7 +173,7 @@ class EnhancedValidator:
             return ValidationResult(False, "", error_msg, suggestion)
 
 class EnhancedDynamicFormConversation:
-    """Enhanced conversational form handler with multilingual support"""
+    """Enhanced conversational form handler with FIXED multilingual support"""
     
     def __init__(self, form_id: str, session_state: SessionState):
         self.form_id = form_id
@@ -207,23 +183,23 @@ class EnhancedDynamicFormConversation:
         if not self.form_schema:
             raise ValueError(f"Form {form_id} not found")
         
-        # Enhanced session management
         self._initialize_form_session()
         
-        # Language state - Load from session to be authoritative
+        # CRITICAL FIX: Session language is ALWAYS authoritative
         form_context_key = self._get_form_context_key()
         session_lang_code = self.session.context.get(form_context_key, {}).get("language", "en")
         self.current_language = Language(session_lang_code)
         
-        # Initialize LLM with enhanced system prompt
+        logger.info(f"[INIT] Session {session_state.session_id} - Form {form_id} initialized")
+        logger.info(f"[INIT] ✅ AUTHORITATIVE language from session: {self.current_language.value}")
+        logger.info(f"[INIT] This language will be used for ALL STT transcriptions")
+        
         self.model = genai.GenerativeModel(
             model_name=settings.GEMINI_MODEL,
             system_instruction=self._get_enhanced_system_prompt()
         )
         
         self.validator = EnhancedValidator()
-        
-        # Rate limiting
         self.last_request_time = 0
         self.min_request_interval = 0.5
         
@@ -242,10 +218,10 @@ class EnhancedDynamicFormConversation:
                 "conversation_style": "friendly",
                 "language": "en",
                 "greeting_sent": False,
-                "clarification_context": {} # For handling partial corrections
+                "clarification_context": {},
+                "language_lock": False  # NEW: Prevents accidental language overrides
             }
         
-        # Initialize form fields if not done
         if not self.session.context[form_context_key].get("fields_initialized"):
             for field in self.form_schema.fields:
                 field_key = f"{form_context_key}_{field.name}"
@@ -258,6 +234,15 @@ class EnhancedDynamicFormConversation:
     
     def _get_field_key(self, field_name: str) -> str:
         return f"{self._get_form_context_key()}_{field_name}"
+    
+    def get_session_language(self) -> Language:
+        """
+        CRITICAL: Get the authoritative session language for STT
+        This should be called by the API endpoint to determine STT language
+        """
+        form_context_key = self._get_form_context_key()
+        session_lang_code = self.session.context.get(form_context_key, {}).get("language", "en")
+        return Language(session_lang_code)
     
     def _get_enhanced_system_prompt(self) -> str:
         """Get enhanced multilingual system prompt"""
@@ -305,6 +290,7 @@ class EnhancedDynamicFormConversation:
         
         MULTI-INTENT HANDLING:
         - If a user provides an answer for the current field AND corrects a previous field in the same sentence, you MUST process both. First, apply the correction, then process the answer for the current field.
+        
         CONVERSATION MANAGEMENT:
         - Start with contextual greeting explaining the form purpose and fields to be collected
         - Ask for ONE field at a time
@@ -313,18 +299,6 @@ class EnhancedDynamicFormConversation:
         - Provide helpful error messages in appropriate language
         - Detect field corrections and update immediately
         - Handle conditional fields appearing based on selections
-        
-        CORRECTION DETECTION RULES:
-        - Look for correction phrases: "મારું નામ ખોટું છે", "wrong name", "correction", "change my", "મારા નામમાં ભૂલ છે"
-        - When user repeats field info for already filled fields, treat as correction
-        - Always prioritize recent input over previous values
-        - Ask for confirmation before updating critical fields
-        
-        CONDITIONAL FIELD RULES:
-        - When user selects radio option that triggers conditional fields, immediately queue those fields
-        - Ask conditional fields right after the triggering field is completed
-        - Maintain order: main field → conditional fields → next main field
-        - Show which conditional path was selected for clarity
         
         RESPONSE FORMAT (JSON ONLY):
         {{
@@ -343,13 +317,28 @@ class EnhancedDynamicFormConversation:
         """
     
     def set_language(self, language: Language):
-        """Set conversation language"""
+        """
+        CRITICAL FIX: Set conversation language and LOCK it in session
+        This prevents accidental overrides from request parameters
+        """
+        import datetime
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        
+        logger.info(f"[LOG] [{timestamp}] ================== LANGUAGE CHANGE ==================")
+        logger.info(f"[LOG] [{timestamp}] Previous language: {self.current_language.value}")
+        logger.info(f"[LOG] [{timestamp}] New language: {language.value}")
+        
         self.current_language = language
         form_context_key = self._get_form_context_key()
         if form_context_key in self.session.context:
             self.session.context[form_context_key]["language"] = language.value
+            self.session.context[form_context_key]["language_lock"] = True  # Lock the language
+            logger.info(f"[LOG] [{timestamp}] ✅ Session context updated with language: {language.value}")
+            logger.info(f"[LOG] [{timestamp}] ✅ Language LOCKED - will not be overridden by request params")
         
-        logger.info(f"Language set to {language.value} for session {self.session.session_id}")
+        logger.info(f"[LOG] [{timestamp}] Language persistence confirmed for session {self.session.session_id}")
+        logger.info(f"[LOG] [{timestamp}] ⚠️ CRITICAL: All future STT calls MUST use session language: {language.value}")
+        logger.info(f"[LOG] [{timestamp}] ================== LANGUAGE CHANGE COMPLETE ==================")
     
     def _detect_field_correction(self, user_text: str) -> Optional[str]:
         """Detect if user is trying to correct a previously filled field"""
@@ -372,7 +361,6 @@ class EnhancedDynamicFormConversation:
             if match:
                 field_mention = match.group(1).lower()
                 
-                # Check if mentioned field exists and is already filled
                 for field in self.form_schema.fields:
                     if (field_mention in field.name.lower() or 
                         field_mention in field.label.lower() or
@@ -387,13 +375,11 @@ class EnhancedDynamicFormConversation:
                         if field_state and field_state.status == FieldStatus.COLLECTED:
                             return field.name
         
-        # Also check if user is providing info for already filled fields
         for field in self.form_schema.fields:
             field_key = self._get_field_key(field.name)
             field_state = self.session.fields.get(field_key)
             
             if field_state and field_state.status == FieldStatus.COLLECTED:
-                # Check for field-specific patterns
                 if field.type == FieldType.SHORT_ANSWER and "name" in field.name.lower():
                     name_patterns = [r"મારું નામ (.+?) છે", r"my name is (.+?)"]
                     for pattern in name_patterns:
@@ -414,7 +400,6 @@ class EnhancedDynamicFormConversation:
         
         conditional_fields = parent_field.conditional_fields.get(selected_value, [])
         
-        # Convert to proper format for processing
         fields_to_add = []
         for cf in conditional_fields:
             fields_to_add.append({
@@ -439,19 +424,16 @@ class EnhancedDynamicFormConversation:
         conditional_fields = parent_field.conditional_fields.get(selected_value, [])
         form_context_key = self._get_form_context_key()
         
-        # Clear any previously triggered conditional fields from this parent
         for value, cf_list in parent_field.conditional_fields.items():
-            if value != selected_value:  # Clear fields from other values
+            if value != selected_value:
                 for cf in cf_list:
                     field_key = f"{form_context_key}_{cf.name}"
                     if field_key in self.session.fields:
                         del self.session.fields[field_key]
                         logger.info(f"Cleared conditional field: {cf.name} (was for {parent_field_name}={value})")
         
-        # Initialize new conditional fields
         for cf in conditional_fields:
             field_key = f"{form_context_key}_{cf.name}"
-            # Always reset conditional fields to ensure fresh start
             self.session.update_field(field_key, None, FieldStatus.PENDING)
             logger.info(f"Initialized conditional field: {cf.name} (triggered by {parent_field_name}={selected_value})")
 
@@ -459,7 +441,6 @@ class EnhancedDynamicFormConversation:
         """Get the next field that needs to be filled, including conditional fields"""
         form_context_key = self._get_form_context_key()
         
-        # First, check main form fields in order
         sorted_fields = sorted(self.form_schema.fields, key=lambda f: f.order)
         
         for field in sorted_fields:
@@ -469,7 +450,6 @@ class EnhancedDynamicFormConversation:
             if not field_info or field_info.status in [FieldStatus.PENDING, FieldStatus.INVALID]:
                 return field
             
-            # If this field has conditional fields, check if we need to ask them
             if (field.conditional_fields and 
                 field_info.status == FieldStatus.COLLECTED and 
                 field_info.value):
@@ -481,8 +461,6 @@ class EnhancedDynamicFormConversation:
                     cf_field_info = self.session.fields.get(cf_field_key, None)
                     
                     if not cf_field_info or cf_field_info.status in [FieldStatus.PENDING, FieldStatus.INVALID]:
-                        # Return conditional field as next field to ask
-                        # Create a temporary FormField object for conditional field
                         temp_field = FormField(
                             id=cf.id,
                             name=cf.name,
@@ -512,11 +490,19 @@ class EnhancedDynamicFormConversation:
     
     def process_user_input(self, user_text: str) -> Dict[str, Any]:
         """Enhanced user input processing with multilingual support"""
+        import datetime
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+        
         form_context_key = self._get_form_context_key()
+        
+        logger.info(f"[LOG] [{timestamp}] ================== PROCESSING USER INPUT ==================")
+        logger.info(f"[LOG] [{timestamp}] User input: '{user_text[:100]}{'...' if len(user_text) > 100 else ''}'")
+        logger.info(f"[LOG] [{timestamp}] Current language mode in conversation: {self.current_language.value}")
         
         # Check for language switch command first with improved detection
         new_language = language_support.detect_language_switch_command(user_text, self.current_language)
         if new_language:
+            logger.info(f"[LOG] [{timestamp}] 🔄 LANGUAGE SWITCH DETECTED: {self.current_language.value} → {new_language.value}")
             self.set_language(new_language)
 
             # Generate appropriate language switch confirmation
@@ -534,6 +520,10 @@ class EnhancedDynamicFormConversation:
                 field_focus = next_field.name
 
             full_message = f"{switch_message} {next_question}".strip()
+            
+            logger.info(f"[LOG] [{timestamp}] Language switch response generated in: {new_language.value}")
+            logger.info(f"[LOG] [{timestamp}] Next field to ask: {field_focus}")
+            logger.info(f"[LOG] [{timestamp}] ================== LANGUAGE SWITCH COMPLETE ==================")
 
             return {
                 "action": "language_switch",

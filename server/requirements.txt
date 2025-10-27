@@ -17,3 +17,4 @@ pyttsx3==2.90
 # Utilities
 soundfile==0.12.1
 pyngrok==7.3.0
+google-cloud-texttospeech==2.33.0
