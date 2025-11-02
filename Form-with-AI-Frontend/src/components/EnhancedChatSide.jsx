@@ -15,13 +15,9 @@ const EnhancedChatSide = ({
   onSkipAudio,
   currentLanguage,
   onLanguageChange,
-  translations,
-  onVoiceInterruption
+  translations
 }) => {
   const chatEndRef = useRef(null);
-  const [silenceTimer, setSilenceTimer] = useState(null);
-  const [silencePromptCount, setSilencePromptCount] = useState(0);
-  const [lastUserActivity, setLastUserActivity] = useState(Date.now());
   const [isListening, setIsListening] = useState(false);
 
   // Scroll to bottom when messages change
@@ -29,107 +25,11 @@ const EnhancedChatSide = ({
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Silence detection and prompting
-  useEffect(() => {
-    const SILENCE_THRESHOLD = 3000; // 3 seconds
-    const MAX_PROMPTS = 3;
-
-    const startSilenceTimer = () => {
-      if (silenceTimer) {
-        clearTimeout(silenceTimer);
-      }
-
-      const timer = setTimeout(() => {
-        if (silencePromptCount < MAX_PROMPTS && !isPlaying && !isListening) {
-          // Generate silence prompt
-          const promptMessage = silencePromptCount === 0 
-            ? (translations?.are_you_there || "Are you there? Please respond.")
-            : silencePromptCount === 1
-            ? (currentLanguage === 'gu' 
-                ? "કૃપા કરીને જવાબ આપો અથવા 'છોડો' કહો."
-                : "Please provide your response or say 'skip'.")
-            : (currentLanguage === 'gu'
-                ? "છેલ્લી તક - કૃપા કરીને જવાબ આપો અથવા સત્ર સમાપ્ત થશે."
-                : "Last chance - please respond or the session will timeout.");
-
-          // Add silence prompt message
-          if (typeof handleSend === 'function') {
-            // Simulate system prompt (you'd want to handle this differently in a real app)
-            console.log("Silence prompt:", promptMessage);
-          }
-
-          setSilencePromptCount(prev => prev + 1);
-          
-          if (silencePromptCount + 1 >= MAX_PROMPTS) {
-            // Session timeout
-            const timeoutMessage = translations?.session_timeout || "Session timeout. Please restart the conversation.";
-            console.log("Session timeout:", timeoutMessage);
-          } else {
-            // Restart silence timer
-            startSilenceTimer();
-          }
-        }
-      }, SILENCE_THRESHOLD);
-
-      setSilenceTimer(timer);
-    };
-
-    // Start silence detection when not playing and user is expected to respond
-    if (!isPlaying && !isListening && messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage?.who === 'agent' && !lastMessage?.isError) {
-        startSilenceTimer();
-      }
-    }
-
-    return () => {
-      if (silenceTimer) {
-        clearTimeout(silenceTimer);
-      }
-    };
-  }, [isPlaying, isListening, messages, silencePromptCount, translations, currentLanguage]);
-
-  // Reset silence timer on user activity
-  const handleUserActivity = () => {
-    if (silenceTimer) {
-      clearTimeout(silenceTimer);
-    }
-    setSilencePromptCount(0);
-    setLastUserActivity(Date.now());
-  };
-
-  // Handle voice interruption
-  const handleVoiceCommand = (command) => {
-    const interruptionWords = currentLanguage === 'gu' 
-      ? ['બંધ કરો', 'રોકો', 'થોભો', 'રાહ', 'છોડો']
-      : ['stop', 'pause', 'wait', 'hold', 'skip'];
-
-    const commandLower = command.toLowerCase().trim();
-    const isInterruption = interruptionWords.some(word => 
-      commandLower.includes(word.toLowerCase())
-    );
-
-    if (isInterruption && typeof onVoiceInterruption === 'function') {
-      onVoiceInterruption(command);
-      return true;
-    }
-    return false;
-  };
-
   const handleEnhancedSend = async () => {
-    handleUserActivity();
-    
-    // Check for voice interruption commands
-    if (inputText.trim() && handleVoiceCommand(inputText.trim())) {
-      setInputText("");
-      return;
-    }
-
     await handleSend();
   };
 
   const handleEnhancedMic = () => {
-    handleUserActivity();
     setIsListening(true);
     
     // Enhanced microphone handling with interruption detection
@@ -170,13 +70,6 @@ const EnhancedChatSide = ({
         }
 
         finalTranscript = final;
-        
-        // Check for interruption commands in real-time
-        const currentText = (final + interimTranscript).trim();
-        if (currentText && handleVoiceCommand(currentText)) {
-          recognition.stop();
-          return;
-        }
 
         // Reset silence timer
         if (silenceTimer) clearTimeout(silenceTimer);
@@ -328,10 +221,7 @@ const EnhancedChatSide = ({
           <input
             type="text"
             value={inputText}
-            onChange={(e) => {
-              setInputText(e.target.value);
-              handleUserActivity();
-            }}
+            onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={translations?.type_message || "Type your answer..."}
             className="flex-1 p-3 bg-gray-700 text-white border border-gray-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent placeholder-gray-400"
@@ -380,11 +270,7 @@ const EnhancedChatSide = ({
 
         {/* Voice commands help */}
         <div className="mt-3 text-xs text-gray-400">
-          {currentLanguage === 'gu' ? (
-            <>📢 અવાજ આદેશો: "બંધ કરો", "રોકો", "છોડો" | ⌨️ ESC કી દબાવો</>
-          ) : (
-            <>📢 Voice commands: "stop", "pause", "skip" | ⌨️ Press ESC key</>
-          )}
+          Press the <kbd className="px-2 py-1.5 text-xs font-semibold text-gray-800 bg-gray-100 border border-gray-200 rounded-lg">ESC</kbd> key to skip audio.
         </div>
       </div>
     </div>

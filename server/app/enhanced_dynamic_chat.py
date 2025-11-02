@@ -193,6 +193,7 @@ class EnhancedDynamicFormConversation:
         logger.info(f"[INIT] Session {session_state.session_id} - Form {form_id} initialized")
         logger.info(f"[INIT] ✅ AUTHORITATIVE language from session: {self.current_language.value}")
         logger.info(f"[INIT] This language will be used for ALL STT transcriptions")
+        logger.info(f"[INIT] Language will NOT change unless user explicitly requests it")
         
         self.model = genai.GenerativeModel(
             model_name=settings.GEMINI_MODEL,
@@ -328,6 +329,14 @@ class EnhancedDynamicFormConversation:
         logger.info(f"[LOG] [{timestamp}] Previous language: {self.current_language.value}")
         logger.info(f"[LOG] [{timestamp}] New language: {language.value}")
         
+        # Only actually change if language is different
+        if self.current_language == language:
+            logger.info(f"[LOG] [{timestamp}] ℹ️ Language unchanged: {language.value}")
+            logger.info(f"[LOG] [{timestamp}] ================== NO CHANGE NEEDED ==================")
+            return
+        
+        logger.info(f"[LOG] [{timestamp}] ⚠️ CHANGING LANGUAGE from {self.current_language.value} to {language.value}")
+        
         self.current_language = language
         form_context_key = self._get_form_context_key()
         if form_context_key in self.session.context:
@@ -338,6 +347,7 @@ class EnhancedDynamicFormConversation:
         
         logger.info(f"[LOG] [{timestamp}] Language persistence confirmed for session {self.session.session_id}")
         logger.info(f"[LOG] [{timestamp}] ⚠️ CRITICAL: All future STT calls MUST use session language: {language.value}")
+        logger.info(f"[LOG] [{timestamp}] ⚠️ Frontend should read session language and use it for /transcribe calls")
         logger.info(f"[LOG] [{timestamp}] ================== LANGUAGE CHANGE COMPLETE ==================")
     
     def _detect_field_correction(self, user_text: str) -> Optional[str]:
@@ -612,17 +622,14 @@ class EnhancedDynamicFormConversation:
                 
                 # Clean response - no JSON formatting in the message
                 clean_greeting = greeting.strip() # Start with the raw greeting
+                clean_question = field_question.strip()
                 
                 # **FIX**: Robustly parse the greeting in case it's a JSON string
                 if clean_greeting.lstrip().startswith('{'):
-                    try:
-                        parsed_greeting = self._parse_llm_response(clean_greeting)
-                        clean_greeting = parsed_greeting.get("response", parsed_greeting.get("ask", clean_greeting))
-                    except Exception:
-                        # If parsing fails, fall back to the original text but try to clean it
-                        clean_greeting = re.sub(r'^```json\s*|\s*```$', '', clean_greeting).strip()
-
-                clean_question = field_question.strip()
+                    # If the greeting is already a JSON, it likely contains the full response.
+                    # We will let the LLM generate the combined message.
+                    clean_greeting = self._parse_llm_response(clean_greeting).get("ask", clean_greeting)
+                
                 full_message = f"{clean_greeting}\n\n{clean_question}"
                 
                 response = {
@@ -700,10 +707,8 @@ class EnhancedDynamicFormConversation:
             clarification_context = self.session.context[form_context_key].get("clarification_context", {})
             if clarification_context and clarification_context.get("field_name") == current_field.name:
                 # User is responding to a clarification question.
-                # Combine the previous context with the new answer.
                 original_input = clarification_context.get("original_input", "")
                 # A simple heuristic to combine: use original for day/month, new for year.
-                # This is specific to the year-correction scenario.
                 if re.fullmatch(r'\d{4}', user_text.strip()): # If user just provides a 4-digit year
                     # Extract day and month from original input
                     day_month_match = re.search(r'(\d{1,2}\s+[A-Za-z\u0A80-\u0AFF]+)', original_input)
@@ -711,19 +716,45 @@ class EnhancedDynamicFormConversation:
                         user_text = f"{day_month_match.group(1)} {user_text.strip()}"
                         logger.info(f"Reconstructed date from clarification: {user_text}")
             
-            # Get LLM response
+            # Get LLM response - FIXED: Use non-streaming for reliability
             self._rate_limit()
-            response = self.model.generate_content(
-                json.dumps(context, indent=2),
-                generation_config={
-                    "temperature": 0.3, "top_p": 0.9, "max_output_tokens": 2048
-                }
-            )
             
-            if not response or not response.text:
-                raise Exception("Empty response from LLM")
+            try:
+                # ✅ CRITICAL FIX: Use non-streaming to get complete response
+                response = self.model.generate_content(
+                    json.dumps(context, indent=2),
+                    generation_config={
+                        "temperature": 0.3,
+                        "top_p": 0.9,
+                        "max_output_tokens": 2048,
+                        "response_mime_type": "application/json"  # Request JSON format
+                    }
+                )
+                
+                if not response or not response.text:
+                    raise Exception("Empty response from LLM")
+                
+                full_response_text = response.text
+                logger.info(f"✅ Received complete LLM response ({len(full_response_text)} chars)")
+                
+            except Exception as e:
+                logger.error(f"LLM generation error: {e}")
+                # Retry once without MIME type specification
+                try:
+                    response = self.model.generate_content(
+                        json.dumps(context, indent=2),
+                        generation_config={
+                            "temperature": 0.3,
+                            "top_p": 0.9,
+                            "max_output_tokens": 2048
+                        }
+                    )
+                    full_response_text = response.text if response else ""
+                except Exception as retry_error:
+                    logger.error(f"LLM retry also failed: {retry_error}")
+                    raise Exception("Failed to get response from LLM") from retry_error
             
-            llm_response = self._parse_llm_response(response.text)
+            llm_response = self._parse_llm_response(full_response_text)
             
             # If LLM asks for clarification, store the context for the next turn.
             if llm_response.get("action") == "clarify":
@@ -751,7 +782,7 @@ class EnhancedDynamicFormConversation:
             return processed_response
             
         except Exception as e:
-            logger.error(f"Input processing error: {e}")
+            logger.error(f"Input processing error: {e}", exc_info=True)
             error_msg = "માફ કરશો, તકનીકી સમસ્યા છે. કૃપા કરીને ફરીથી પ્રયાસ કરો." if self.current_language == Language.GUJARATI else "Sorry, I'm having a technical issue. Please try again."
             current_field_name = None
             if 'current_field' in locals() and current_field:
@@ -765,6 +796,7 @@ class EnhancedDynamicFormConversation:
                 "language": self.current_language.value,
                 "reply": error_msg
             }
+
 
     def _extract_corrected_value(self, user_text: str, field: FormField) -> Optional[str]:
         """Extract corrected value from user input based on field type"""
@@ -914,28 +946,38 @@ class EnhancedDynamicFormConversation:
         return context
     
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
-        """Parse LLM JSON response with fallback handling"""
+        """Enhanced JSON parsing with better error handling for Unicode and truncation"""
+        
+        # Remove markdown code blocks
+        clean_text = re.sub(r'^```json\s*|\s*```$', '', response_text.strip(), flags=re.DOTALL)
+        
+        # Log the text we're trying to parse
+        logger.info(f"Parsing LLM response ({len(clean_text)} chars)")
+        if len(clean_text) < 500:
+            logger.debug(f"Response text: {clean_text}")
+        
         try:
-            # First, strip markdown code block fences if they exist
-            clean_text = re.sub(r'^```json\s*|\s*```$', '', response_text.strip(), flags=re.DOTALL)
-            return json.loads(clean_text)
-        except json.JSONDecodeError:
-            pass
-        
-        # Try to find JSON in the text
-        json_patterns = [r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}']
-        
-        for pattern in json_patterns:
-            matches = re.findall(pattern, response_text, re.DOTALL)
-            for match in reversed(matches): # Check last match first, often the most complete
+            parsed = json.loads(clean_text)
+            logger.info("✅ JSON parsed successfully")
+            return parsed
+            
+        except json.JSONDecodeError as e:
+            logger.warning(f"Initial JSON parsing failed at position {e.pos}: {e.msg}")
+            logger.debug(f"Text around error: ...{clean_text[max(0, e.pos-50):min(len(clean_text), e.pos+50)]}...")
+            
+            # ✅ ENHANCED REPAIR STRATEGY
+            repaired_json = self._repair_truncated_json(clean_text)
+            if repaired_json:
                 try:
-                    return json.loads(match)
-                except json.JSONDecodeError:
-                    continue
+                    parsed = json.loads(repaired_json)
+                    logger.info("✅ Successfully parsed repaired JSON")
+                    return parsed
+                except json.JSONDecodeError as repair_error:
+                    logger.error(f"Repaired JSON still invalid: {repair_error}")
         
-        # Fallback response
-        logger.warning(f"Failed to parse LLM response: {response_text[:200]}...")
-        fallback_text = language_support.get_ui_text("are_you_there", self.current_language)
+        # Final fallback
+        logger.error("All JSON parsing attempts failed, using fallback response")
+        fallback_text = language_support.get_ui_text("can_u_please_repeat", self.current_language)
         return {
             "action": "ask",
             "updates": {},
@@ -945,7 +987,8 @@ class EnhancedDynamicFormConversation:
             "language": self.current_language.value,
             "reply": fallback_text
         }
-    
+
+        
     def _process_field_updates(self, llm_response: Dict[str, Any], current_field: Optional[FormField]) -> Dict[str, Any]:
         """Process and validate field updates from LLM response"""
         updates = llm_response.get("updates", {})
@@ -1512,5 +1555,71 @@ class EnhancedDynamicFormConversation:
             "progress_percentage": (completed_fields / total_fields) * 100 if total_fields > 0 else 0
         }
 
+    def _repair_truncated_json(self, json_text: str) -> Optional[str]:
+        """Advanced JSON repair for truncated responses with Unicode characters"""
+        
+        try:
+            # Strategy 1: Find the last complete field and truncate there
+            # Look for the last properly closed string value
+            last_complete_quote = json_text.rfind('",')
+            last_complete_brace = json_text.rfind('}')
+            
+            if last_complete_quote > last_complete_brace:
+                # We have an incomplete string value, truncate at last complete field
+                repaired = json_text[:last_complete_quote + 1]  # Include the quote
+            else:
+                # Try to find last complete structure
+                repaired = json_text
+            
+            # Count braces and brackets to balance them
+            open_braces = repaired.count('{')
+            close_braces = repaired.count('}')
+            open_brackets = repaired.count('[')
+            close_brackets = repaired.count(']')
+            
+            # Add missing closing characters
+            repaired += ']' * (open_brackets - close_brackets)
+            repaired += '}' * (open_braces - close_braces)
+            
+            logger.info(f"Repaired JSON: added {open_braces - close_braces} braces, {open_brackets - close_brackets} brackets")
+            
+            # Strategy 2: If we have an incomplete Unicode escape, remove it
+            # Look for incomplete \uXXXX patterns at the end
+            unicode_pattern = r'\\u[0-9a-fA-F]{0,3}$'
+            if re.search(unicode_pattern, repaired):
+                # Find the last complete string and truncate there
+                last_quote = repaired.rfind('"', 0, len(repaired) - 10)
+                if last_quote > 0:
+                    repaired = repaired[:last_quote + 1]
+                    # Re-balance
+                    open_braces = repaired.count('{')
+                    close_braces = repaired.count('}')
+                    repaired += '}' * (open_braces - close_braces)
+                    logger.info("Removed incomplete Unicode escape sequence")
+            
+            # Strategy 3: Remove any incomplete string at the end
+            # Check if last character before closing braces is a quote
+            content_without_braces = repaired.rstrip('}').rstrip()
+            if content_without_braces and content_without_braces[-1] != '"' and content_without_braces[-1] != ',':
+                # Find the last comma or opening brace
+                last_comma = content_without_braces.rfind(',')
+                last_open_brace = content_without_braces.rfind('{')
+                truncate_at = max(last_comma, last_open_brace)
+                
+                if truncate_at > 0:
+                    repaired = content_without_braces[:truncate_at + 1]
+                    # Re-balance braces
+                    open_braces = repaired.count('{')
+                    close_braces = repaired.count('}')
+                    repaired += '}' * (open_braces - close_braces)
+                    logger.info("Removed incomplete field at end")
+            
+            logger.debug(f"Repaired JSON: {repaired[:200]}...")
+            return repaired
+            
+        except Exception as e:
+            logger.error(f"JSON repair failed: {e}")
+            return None
+    
 # Alias for backward compatibility
 DynamicFormConversation = EnhancedDynamicFormConversation

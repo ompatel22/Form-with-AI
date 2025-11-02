@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # Gemini
     GEMINI_API_KEY: str
-    GEMINI_MODEL: str = "gemini-2.0-flash-lite"
+    GEMINI_MODEL: str = "gemini-2.0-flash"
 
     # Whisper
     WHISPER_MODEL_SIZE: str = "base"

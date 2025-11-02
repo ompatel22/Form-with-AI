@@ -227,17 +227,26 @@ class LanguageSupport:
             Return JSON format with the response.
             """
             
-            response = self.model.generate_content(
+            response_stream = self.model.generate_content(
                 prompt,
                 generation_config={
                     "temperature": 0.3,
                     "top_p": 0.9,
                     "max_output_tokens": 1024
-                }
+                },
+                stream=True
             )
             
-            if response and response.text:
-                response_text = response.text.strip()
+            # --- START: ROBUST RESPONSE HANDLING ---
+            response_text = ""
+            try:
+                for chunk in response_stream:
+                    response_text += chunk.text
+            except Exception as e:
+                logger.error(f"Error processing response stream: {e}. Finish reason might indicate a block.")
+            # --- END: ROBUST RESPONSE HANDLING ---
+            
+            if response_text:
                 try:
                     # First, try direct parsing
                     parsed = json.loads(response_text)
@@ -336,17 +345,26 @@ class LanguageSupport:
                 - Start directly with the greeting
                 """
             
-            response = self.model.generate_content(
+            response_stream = self.model.generate_content(
                 prompt,
                 generation_config={
                     "temperature": 0.5,
                     "top_p": 0.8,
                     "max_output_tokens": 200
-                }
+                },
+                stream=True
             )
             
-            if response and response.text:
-                greeting = response.text.strip()
+            # --- START: ROBUST RESPONSE HANDLING ---
+            greeting = ""
+            try:
+                for chunk in response_stream:
+                    greeting += chunk.text
+            except Exception as e:
+                logger.error(f"Error processing greeting stream: {e}. Finish reason might indicate a block.")
+            # --- END: ROBUST RESPONSE HANDLING ---
+            
+            if greeting:
                 
                 # More aggressive cleaning
                 greeting = re.sub(r'.*greeting.*[:।]', '', greeting, flags=re.IGNORECASE)

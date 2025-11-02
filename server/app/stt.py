@@ -23,10 +23,9 @@ def _get_model_for_language(language: Language = Language.ENGLISH):
     
     if language == Language.GUJARATI:
         # FIXED: Only use models that can reliably handle Gujarati
-        # Order: medium (best) -> small (good) -> never use base/tiny
         gujarati_models = [
-            "medium",   # Best accuracy for Gujarati
-            "small",    # Good balance, minimum acceptable
+            "small",   # Best accuracy for Gujarati
+            "medium",    # Good balance, minimum acceptable
         ]
         cache_key = "gujarati_enhanced"
     else:

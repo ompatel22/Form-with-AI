@@ -384,6 +384,34 @@ def get_session_info(session_id: str):
             detail="Failed to retrieve session information"
         )
 
+@app.get("/session/{session_id}/language")
+def get_session_language(session_id: str, form_id: str = Query(...)):
+    """Get the current language for a session/form combination"""
+    try:
+        session = memory_store.get_or_create_session(session_id)
+        form_context_key = f"form_{form_id}"
+        
+        session_lang_code = session.context.get(form_context_key, {}).get("language", "en")
+        language_lock = session.context.get(form_context_key, {}).get("language_lock", False)
+        
+        logger.info(f"Session {session_id} language query: {session_lang_code} (locked: {language_lock})")
+        
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "form_id": form_id,
+            "language": session_lang_code,
+            "language_locked": language_lock,
+            "message": f"Frontend should use '{session_lang_code}' for all STT calls"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get session language for {session_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve session language"
+        )
+
 # STT endpoint for language-specific transcription
 class TranscribeRequest(BaseModel):
     audio_b64: str = Field(..., description="Base64 encoded audio data")
@@ -396,15 +424,19 @@ async def transcribe_audio(req: TranscribeRequest):
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
     
     try:
-        # LOG: Request details
+        # LOG: Request details with audio size
+        audio_size = len(req.audio_b64) if req.audio_b64 else 0
         logger.info(f"[LOG] [{timestamp}] ================== TRANSCRIPTION REQUEST ==================")
-        logger.info(f"[LOG] [{timestamp}] Language requested: {req.language}")
+        logger.info(f"[LOG] [{timestamp}] Language requested from frontend: {req.language}")
+        logger.info(f"[LOG] [{timestamp}] Audio data size: {audio_size} bytes (base64)")
         
         lang = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
         logger.info(f"[LOG] [{timestamp}] Language enum resolved to: {lang.value}")
+        logger.info(f"[LOG] [{timestamp}] ⚠️ CRITICAL: This language will be FORCED to Whisper")
+        logger.info(f"[LOG] [{timestamp}] Whisper will NOT auto-detect language")
         
         # Use language-specific STT model
-        logger.info(f"[LOG] [{timestamp}] Calling transcribe_b64 with language: {lang.value}")
+        logger.info(f"[LOG] [{timestamp}] Calling transcribe_b64 with FORCED language: {lang.value}")
         transcription = transcribe_b64(req.audio_b64, lang)
         
         if not transcription:
@@ -414,9 +446,10 @@ async def transcribe_audio(req: TranscribeRequest):
                 detail="Failed to transcribe audio"
             )
         
-        model_used = "vasista22/whisper-gujarati-medium" if lang == Language.GUJARATI else "whisper-english"
-        logger.info(f"[LOG] [{timestamp}] Final transcription result: '{transcription[:100]}{'...' if len(transcription) > 100 else ''}'")
+        model_used = "vasista22/whisper-gujarati-medium" if lang == Language.GUJARATI else "whisper-small"
+        logger.info(f"[LOG] [{timestamp}] ✅ Final transcription result: '{transcription[:100]}{'...' if len(transcription) > 100 else ''}'")
         logger.info(f"[LOG] [{timestamp}] Model used: {model_used}")
+        logger.info(f"[LOG] [{timestamp}] Forced language: {lang.value}")
         logger.info(f"[LOG] [{timestamp}] ================== TRANSCRIPTION COMPLETE ==================")
         
         return {
@@ -428,6 +461,7 @@ async def transcribe_audio(req: TranscribeRequest):
         
     except Exception as e:
         logger.error(f"[LOG] [{timestamp}] ❌ Transcription failed: {e}")
+        logger.error(f"[LOG] [{timestamp}] Exception details: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Transcription service error"
@@ -448,7 +482,7 @@ async def dynamic_chat(req: DynamicChatRequest):
         logger.info(f"[LOG] [{timestamp}] ================== DYNAMIC CHAT REQUEST ==================")
         logger.info(f"[LOG] [{timestamp}] Session ID: {session_id}")
         logger.info(f"[LOG] [{timestamp}] Form ID: {form_id}")
-        logger.info(f"[LOG] [{timestamp}] Language requested: {req.language}")
+        logger.info(f"[LOG] [{timestamp}] Language from request parameter: {req.language}")
         logger.info(f"[LOG] [{timestamp}] Message: '{req.message[:100]}{'...' if len(req.message) > 100 else ''}'")
         
         # Get or create session
@@ -463,16 +497,33 @@ async def dynamic_chat(req: DynamicChatRequest):
         # Create enhanced form-specific conversation handler
         conversation = EnhancedDynamicFormConversation(form_id, session)
         
-        # Set language preference
-        language = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
-        logger.info(f"[LOG] [{timestamp}] Language enum resolved to: {language.value}")
+        # CRITICAL FIX: Get session language (which is the source of truth)
+        session_language_code = session.context.get(f'form_{form_id}', {}).get('language', 'en')
+        language_from_session = Language(session_language_code)
+        
+        logger.info(f"[LOG] [{timestamp}] ⚠️ CRITICAL: Session language is: {language_from_session.value}")
+        logger.info(f"[LOG] [{timestamp}] Request parameter wants: {req.language}")
+        
+        # ONLY set language from request if this is a new session or language isn't locked
+        language_lock = session.context.get(f'form_{form_id}', {}).get('language_lock', False)
+        
+        if language_lock and language_from_session != Language.ENGLISH:
+            # Language is locked, ignore request parameter
+            logger.info(f"[LOG] [{timestamp}] 🔒 Language LOCKED to session value: {language_from_session.value}")
+            logger.info(f"[LOG] [{timestamp}] ❌ IGNORING request parameter: {req.language}")
+            language = language_from_session
+        else:
+            # Use request parameter for initial language setting
+            language = Language.GUJARATI if req.language == "gu" else Language.ENGLISH
+            logger.info(f"[LOG] [{timestamp}] ✅ Using request parameter language: {language.value}")
         
         conversation.set_language(language)
         
         # The conversation object is the source of truth for the language, loaded from the session.
         language = conversation.current_language
-        logger.info(f"[LOG] [{timestamp}] Current active language in conversation: {language.value}")
-        logger.info(f"[LOG] [{timestamp}] Session language state persisted: {session.context.get(f'form_{form_id}', {}).get('language', 'unknown')}")
+        logger.info(f"[LOG] [{timestamp}] 🎯 FINAL ACTIVE LANGUAGE: {language.value}")
+        logger.info(f"[LOG] [{timestamp}] This language will be used for STT and TTS")
+        logger.info(f"[LOG] [{timestamp}] Session language persisted: {session.context.get(f'form_{form_id}', {}).get('language', 'unknown')}")
         
         # Normalize user input
         raw_message = req.message.strip()

@@ -40,6 +40,7 @@ function App() {
   const currentAudio = useRef(null);
   const activeRecognition = useRef(null);
   const microphoneState = useRef("idle"); // Track microphone state
+  const languageRef = useRef("en"); // Ref to always get current language synchronously
 
   const b64ToBlob = (b64, mime) => {
     const bytes = atob(b64);
@@ -52,8 +53,8 @@ function App() {
     if (!text || !("speechSynthesis" in window)) return;
     const utterance = new SpeechSynthesisUtterance(text);
     
-    // Set language based on conversation language
-    utterance.lang = language === "gu" ? "gu-IN" : "en-US";
+    // Set language based on conversation language - use ref for current value
+    utterance.lang = languageRef.current === "gu" ? "gu-IN" : "en-US";
     utterance.rate = 0.9;
     utterance.pitch = 1.0;
     window.speechSynthesis.speak(utterance);
@@ -103,7 +104,7 @@ function App() {
       
       if (text) {
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = language === "gu" ? "gu-IN" : "en-US";
+        utterance.lang = languageRef.current === "gu" ? "gu-IN" : "en-US";
         utterance.rate = 0.9;
         utterance.pitch = 1.0;
         
@@ -191,13 +192,13 @@ function App() {
       "અંગ્રેજીમાં બોલો", "અંગ્રેજી ભાષા"
     ];
     
-    if (language === "en") {
+    if (languageRef.current === "en") {
       for (const pattern of switchToGujarati) {
         if (textLower.includes(pattern)) {
           return "gu";
         }
       }
-    } else if (language === "gu") {
+    } else if (languageRef.current === "gu") {
       for (const pattern of switchToEnglish) {
         if (textLower.includes(pattern)) {
           return "en";
@@ -214,7 +215,8 @@ function App() {
 
     // Detect language switch
     const newLanguage = detectLanguageSwitch(msg);
-    if (newLanguage && newLanguage !== language) {
+    if (newLanguage && newLanguage !== languageRef.current) {
+      languageRef.current = newLanguage;
       setLanguage(newLanguage);
       console.log("Language switched to:", newLanguage);
     }
@@ -225,8 +227,8 @@ function App() {
         session_id: sessionId, 
         form_id: currentForm.id,
         message: msg,
-        language: newLanguage || language, // Use detected language or current
-        user_language_preference: language // Send current UI language
+        language: newLanguage || languageRef.current, // Use detected language or current
+        user_language_preference: languageRef.current // Send current UI language
       };
 
       if (includeFormData && Object.keys(formData).length > 0) {
@@ -249,7 +251,8 @@ function App() {
       setStatus("idle");
 
       // Update language if switched by backend
-      if (data.language && data.language !== language) {
+      if (data.language && data.language !== languageRef.current) {
+        languageRef.current = data.language;
         setLanguage(data.language);
         console.log("Backend switched language to:", data.language);
       }
@@ -367,7 +370,7 @@ function App() {
     }
 
     const rec = new Rec();
-    rec.lang = language === "gu" ? "gu-IN" : "en-US";
+    rec.lang = languageRef.current === "gu" ? "gu-IN" : "en-US";
     rec.interimResults = true;
     rec.maxAlternatives = 1;
     rec.continuous = true;
@@ -422,7 +425,7 @@ function App() {
         const confidence = e.results[i][0].confidence;
         
         // More lenient confidence for Gujarati
-        const confidenceThreshold = language === "gu" ? 0.4 : 0.6;
+        const confidenceThreshold = languageRef.current === "gu" ? 0.4 : 0.6;
         
         if (confidence > confidenceThreshold || e.results[i].isFinal) {
           if (e.results[i].isFinal) {
@@ -494,7 +497,7 @@ function App() {
         dynamicBackendChat(finalText);
       } else if (!speechDetected && !isAutoStart) {
         console.log("Only background noise, no action taken");
-        const noiseMessage = language === "en" 
+        const noiseMessage = languageRef.current === "en" 
           ? "Only background noise detected. Click the microphone when you're ready to speak."
           : "માત્ર પૃષ્ઠભૂમિનો અવાજ સાંભળ્યો. તમે બોલવા તૈયાર હો ત્યારે માઇક્રોફોન પર ક્લિક કરો.";
           
@@ -525,15 +528,15 @@ function App() {
       // Better error handling
       let errorMessage = "Speech recognition error";
       if (e.error === 'no-speech') {
-        errorMessage = language === "en" 
+        errorMessage = languageRef.current === "en" 
           ? "No speech detected. Try speaking louder or closer to the microphone."
           : "કોઈ વાણી મળી નથી. જોરથી બોલવાનો અથવા માઇક્રોફોનની નજીક બોલવાનો પ્રયાસ કરો.";
       } else if (e.error === 'audio-capture') {
-        errorMessage = language === "en"
+        errorMessage = languageRef.current === "en"
           ? "Microphone access error. Please check your microphone permissions."
           : "માઇક્રોફોન એક્સેસ એરર. કૃપા કરીને તમારી માઇક્રોફોન પરવાનગીઓ તપાસો.";
       } else if (e.error === 'not-allowed') {
-        errorMessage = language === "en"
+        errorMessage = languageRef.current === "en"
           ? "Microphone access denied. Please allow microphone access and try again."
           : "માઇક્રોફોનની પરવાનગી નકારવામાં આવી. કૃપા કરીને માઇક્રોફોનની પરવાનગી આપો અને ફરીથી પ્રયાસ કરો.";
       }
@@ -590,10 +593,10 @@ function App() {
 
   // Enhanced language change handler with better reliability
   const handleLanguageChange = async (newLanguage) => {
-    console.log("🌐 Language change initiated:", currentLanguage, "→", newLanguage);
+    console.log("🌐 Language change initiated:", languageRef.current, "→", newLanguage);
     
     // Prevent unnecessary changes
-    if (language === newLanguage) {
+    if (languageRef.current === newLanguage) {
       console.log("Language already set to", newLanguage);
       return;
     }
@@ -613,8 +616,13 @@ function App() {
       setIsPlaying(false);
       stopPhoneCallMode();
       
-      // Update language state immediately for UI responsiveness
+      // Update language ref IMMEDIATELY for synchronous access
+      languageRef.current = newLanguage;
+      console.log("✅ Language ref updated to:", languageRef.current);
+      
+      // Update language state for UI components
       setLanguage(newLanguage);
+      console.log("✅ Language state updated to:", newLanguage);
       
       // Send explicit language change command to backend
       const langCommands = {
@@ -649,10 +657,12 @@ function App() {
     } catch (error) {
       console.error("❌ Language change failed:", error);
       
-      // Revert language on error
-      setLanguage(language);
+      // Revert language on error - need to get the old value
+      const oldLanguage = newLanguage === "gu" ? "en" : "gu";
+      languageRef.current = oldLanguage;
+      setLanguage(oldLanguage);
       
-      const errorMessage = language === "en" 
+      const errorMessage = oldLanguage === "en" 
         ? "Failed to change language. Please try again."
         : "ભાષા બદલવામાં નિષ્ફળતા. કૃપા કરીને ફરીથી પ્રયાસ કરો.";
         
@@ -840,6 +850,12 @@ function App() {
       stopPhoneCallMode();
     };
   }, []);
+
+  // Sync languageRef with language state
+  useEffect(() => {
+    languageRef.current = language;
+    console.log("🔄 Language ref synced to:", language);
+  }, [language]);
 
   if (showFormManager) {
     return (

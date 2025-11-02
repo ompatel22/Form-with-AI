@@ -326,7 +326,7 @@ SAMPLE_FORMS = {
                             "order": 5
                         }
                     ],
-                    "Existing Patient": [
+                    "Existing Patient": [   
                         {
                             "name": "patient_id",
                             "type": "short_answer",
@@ -345,19 +345,12 @@ SAMPLE_FORMS = {
                 }
             },
             {
-                "name": "reason_for_visit",
-                "type": "paragraph",
-                "label": "Reason for Visit",
-                "validation": {"required": True},
-                "order": 6
-            },
-            {
                 "name": "symptoms",
                 "type": "checkboxes",
                 "label": "Current Symptoms (if any)",
                 "options": ["Fever", "Headache", "Cough", "Fatigue", "Nausea", "Other"],
-                "validation": {"required": False},
-                "order": 7
+                "validation": {"required": True},
+                "order": 5
             }
         ]
     }
