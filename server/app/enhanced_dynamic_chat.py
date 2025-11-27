@@ -301,6 +301,7 @@ class EnhancedDynamicFormConversation:
         - Handle conditional fields appearing based on selections
         
         RESPONSE FORMAT (JSON ONLY):
+        IMPORTANT: All JSON string values must be properly escaped for valid JSON formatting.
         {{
           "action": "ask" | "set" | "done" | "clarify" | "correct" | "remove" | "language_switch" | "conditional_trigger",
           "updates": {{"field_name": "cleaned_value or null if removed"}},
