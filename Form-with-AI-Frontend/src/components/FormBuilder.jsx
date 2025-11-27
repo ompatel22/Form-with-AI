@@ -150,7 +150,8 @@ export default function FormBuilder({ onClose, onFormCreated }) {
             scale_min: field.scale_min,
             scale_max: field.scale_max,
             scale_min_label: field.scale_min_label,
-            scale_max_label: field.scale_max_label
+            scale_max_label: field.scale_max_label,
+            conditional_fields: field.conditional_fields
           }))
         }),
       });

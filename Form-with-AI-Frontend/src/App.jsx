@@ -114,7 +114,7 @@ function App() {
         utterance.onend = () => {
           setIsPlaying(false);
           setTimeout(() => {
-            console.log("🎙️ Phone call mode: Auto-starting microphone after speech synthesis");
+            console.log("Auto-starting microphone after speech synthesis");
             handleMic(true);
           }, 300);
         };
@@ -873,7 +873,7 @@ function App() {
         <div className="text-center mb-8">
           <h1 className="text-3xl md:text-4xl font-bold text-white mb-4 tracking-tight">
             {currentForm 
-              ? `${currentForm.title} — AI Assistant`
+              ? `${currentForm.title} — AI Powered Form`
               : "AI-Powered Form Builder"
             }
           </h1>

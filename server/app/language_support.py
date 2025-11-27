@@ -46,7 +46,7 @@ class LanguageSupport:
                 "skip_audio": "Skip",
                 "ai_speaking": "AI Speaking...",
                 "type_message": "Type your answer...",
-                "are_you_there": "Are you there? Please respond.",
+                "can_u_please_repeat": "Can you please repeat?",
                 "session_timeout": "Session timeout. Please restart the conversation.",
                 "voice_commands": {
                     "stop": ["stop", "pause", "wait", "hold"],
@@ -70,7 +70,7 @@ class LanguageSupport:
                 "skip_audio": "છોડો",
                 "ai_speaking": "AI બોલી રહ્યું છે...",
                 "type_message": "તમારો જવાબ લખો...",
-                "are_you_there": "તમે ત્યાં છો? કૃપા કરીને જવાબ આપો.",
+                "can_u_please_repeat": "તમે ત્યાં છો? કૃપા કરીને જવાબ આપો.",
                 "session_timeout": "સત્ર સમાપ્ત. કૃપા કરીને વાતચીત ફરીથી શરૂ કરો.",
                 "voice_commands": {
                     "stop": ["બંધ કરો", "રોકો", "થોભો", "રાહ"],
@@ -270,7 +270,7 @@ class LanguageSupport:
                 return {"response": response_text, "language": target_language.value}
             
             # Fallback response
-            fallback_text = self.get_ui_text("are_you_there", target_language)
+            fallback_text = self.get_ui_text("can_u_please_repeat", target_language)
             return {
                 "response": fallback_text,
                 "language": target_language.value,
@@ -278,8 +278,8 @@ class LanguageSupport:
             }
             
         except Exception as e:
-            logger.error(f"Language response generation failed: {e}")
-            fallback_text = self.get_ui_text("are_you_there", target_language)
+            logger.error(f"Language response generation failed: {e}", exc_info=True)
+            fallback_text = self.get_ui_text("can_u_please_repeat", target_language)
             return {
                 "response": fallback_text,
                 "language": target_language.value,
@@ -326,8 +326,12 @@ class LanguageSupport:
                 - ફોર્મનો હેતુ સમજાવો
                 - કેવી રીતે હું મદદ કરીશ તે જણાવો
                 - સંક્ષિપ્ત અને મિત્રતાપૂર્ણ રાખો
-                - કોઈ મેટા ટેક્સટ નહીં
-                - સીધું શુભેચ્છા સંદેશથી શરૂ કરો
+                
+                RESPONSE FORMAT (JSON ONLY):
+                {{
+                  "response": "Your response in requested language",
+                  "language": "gu"
+                }}
                 """
             else:
                 prompt = f"""
@@ -341,50 +345,31 @@ class LanguageSupport:
                 - Explain what the form is for
                 - Explain how I'll help them fill it out
                 - Keep it concise and friendly
-                - NO meta text or references to "greeting message"
-                - Start directly with the greeting
+                
+                RESPONSE FORMAT (JSON ONLY):
+                {{
+                  "response": "Your response in requested language",
+                  "language": "en"
+                }}
                 """
             
-            response_stream = self.model.generate_content(
+            response = self.model.generate_content(
                 prompt,
                 generation_config={
                     "temperature": 0.5,
                     "top_p": 0.8,
-                    "max_output_tokens": 200
-                },
-                stream=True
+                    "max_output_tokens": 512,
+                    "response_mime_type": "application/json"
+                }
             )
             
-            # --- START: ROBUST RESPONSE HANDLING ---
-            greeting = ""
-            try:
-                for chunk in response_stream:
-                    greeting += chunk.text
-            except Exception as e:
-                logger.error(f"Error processing greeting stream: {e}. Finish reason might indicate a block.")
-            # --- END: ROBUST RESPONSE HANDLING ---
+            greeting = response.text
             
             if greeting:
-                
-                # More aggressive cleaning
-                greeting = re.sub(r'.*greeting.*[:।]', '', greeting, flags=re.IGNORECASE)
-                greeting = re.sub(r'^.*?[:।]\s*', '', greeting).strip()
-                greeting = re.sub(r'```.*?```', '', greeting, flags=re.DOTALL).strip()
-                greeting = re.sub(r'\{.*?\}', '', greeting, flags=re.DOTALL).strip()
-                
-                # Remove JSON formatting if present
-                if greeting.startswith('{') and greeting.endswith('}'):
-                    try:
-                        import json
-                        parsed = json.loads(greeting)
-                        greeting = parsed.get('response', parsed.get('greeting', parsed.get('message', greeting)))
-                    except:
-                        pass
-                
                 return greeting.strip()
             
         except Exception as e:
-            logger.error(f"Failed to generate enhanced {language.value} greeting: {e}")
+            logger.error(f"Failed to generate enhanced {language.value} greeting: {e}", exc_info=True)
         
         # Enhanced fallback greetings with form context
         if language == Language.GUJARATI:

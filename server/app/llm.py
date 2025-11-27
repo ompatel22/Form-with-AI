@@ -5,6 +5,7 @@ import time
 from typing import Dict, Any, List, Optional, Tuple
 from dotenv import load_dotenv
 import google.generativeai as genai
+from google.generativeai.types import GenerationConfig
 from datetime import datetime, timedelta
 import logging
 from dataclasses import dataclass
@@ -327,6 +328,9 @@ CONVERSATION AWARENESS:
 - Never force the next field if user wants to correct or remove something
 - **If the user asks for the current date, use the `current_date` provided in the context.**
 
+GREETING HANDLING:
+- **Only provide a greeting if the `greeting_sent` flag in `form_context` is `false`.**
+
 RESPONSE RULES:
 - Keep responses short, natural, and casual
 - Only confirm the field being processed
@@ -448,15 +452,30 @@ class GeminiLLM:
             
             # Generate response with retry logic
             response = None
+            
+            response_schema = {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["ask", "set", "done", "clarify", "correct", "remove"]},
+                    "updates": {"type": "object"},
+                    "ask": {"type": "string"},
+                    "field_focus": {"type": "string"},
+                    "tone": {"type": "string", "enum": ["casual", "apologetic", "professional"]},
+                },
+                "required": ["action", "ask"]
+            }
+
             for attempt in range(3):
                 try:
                     response = self.model.generate_content(
                         json.dumps(context, indent=2),
-                        generation_config={
-                            "temperature": 0.3,
-                            "top_p": 0.9,
-                            "max_output_tokens": 2048
-                        }
+                        generation_config=GenerationConfig(
+                            temperature=0.3,
+                            top_p=0.9,
+                            max_output_tokens=2048,
+                            response_mime_type="application/json",
+                            response_schema=response_schema
+                        )
                     )
                     break
                 except Exception as e:

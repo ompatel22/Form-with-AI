@@ -347,10 +347,10 @@ export default function FormManager({ onFormSelected, onClose }) {
 
           {activeTab === 'templates' && (
             <div>
-              <div className="mb-8 text-center">
+              {/* <div className="mb-8 text-center">
                 <h3 className="text-2xl font-semibold text-white mb-3">Professional Form Templates</h3>
                 <p className="text-gray-400 text-lg">Start with AI-powered templates and customize to your needs</p>
-              </div>
+              </div> */}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {templates.map((template) => (
@@ -395,9 +395,6 @@ export default function FormManager({ onFormSelected, onClose }) {
               ? `${forms.length} intelligent forms ready for AI assistance`
               : `${templates.length} professional templates available`
             }
-          </div>
-          <div className="text-xs text-gray-500">
-            Powered by AI • Voice Recognition • Natural Language Processing
           </div>
         </div>
       </div>

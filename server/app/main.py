@@ -139,7 +139,6 @@ class DynamicChatResponse(BaseModel):
     updates: Optional[Dict[str, Any]] = None
     audio_b64: Optional[str] = None
     form_summary: Optional[Dict[str, Any]] = None
-    completion_status: Optional[Dict[str, Any]] = None
     field_focus: Optional[str] = None
     tone: Optional[str] = None
     language: Optional[str] = "en"  # Response language
@@ -567,10 +566,9 @@ async def dynamic_chat(req: DynamicChatRequest):
         if reply_text:
             session.add_message(MessageRole.AGENT, reply_text)
         
-        # Get form summary and completion status
+        # Get form summary
         form_summary = conversation.get_form_summary()
-        completion_status = conversation.get_completion_status()
-        
+
         # Handle form submission if action is "submit"
         if llm_response.get("action") == "submit":
             try:
@@ -622,7 +620,6 @@ async def dynamic_chat(req: DynamicChatRequest):
             updates=llm_response.get("updates", {}),
             audio_b64=audio_b64,
             form_summary=form_summary,
-            completion_status=completion_status,
             field_focus=llm_response.get("field_focus"),
             tone=llm_response.get("tone", "friendly"),
             language=language.value,
@@ -759,6 +756,7 @@ def create_form(req: CreateFormRequest):
         form = form_store.create_form(form_data)
         
         logger.info(f"Created new form: {form.id} - {form.title}")
+        logger.info(f"Form schema created: {form.dict()}")
         
         return {
             "status": "success",
