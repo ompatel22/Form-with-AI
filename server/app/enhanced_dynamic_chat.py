@@ -915,33 +915,34 @@ class EnhancedDynamicFormConversation:
         return context
     
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
-        """Parse LLM JSON response with improved fallback handling."""
+        """Parse LLM JSON response with sanitization for invalid escape characters."""
         
         text = response_text.strip()
         
-        # 1. Try to find JSON within a markdown block
+        # Isolate the potential JSON string
+        json_str = text
         match = re.search(r'```json\s*(\{.*\})\s*```', text, re.DOTALL)
         if match:
             json_str = match.group(1)
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError as e:
-                logger.warning(f"JSON in markdown failed to parse: {e}. Content: {json_str[:500]}")
-                # Don't give up, fall through to the next method
-        
-        # 2. Fallback to finding the first '{' and last '}'
-        start = text.find('{')
-        end = text.rfind('}')
-        if start != -1 and end > start:
-            json_str = text[start:end+1]
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError as e:
-                logger.warning(f"JSON slice failed to parse: {e}. Content: {json_str[:500]}")
-                # Fallthrough to final error
-                
-        # 3. If all else fails, log and return the fallback response
-        logger.warning(f"Failed to parse LLM response completely: {text[:500]}...")
+        else:
+            start = text.find('{')
+            end = text.rfind('}')
+            if start != -1 and end > start:
+                json_str = text[start:end+1]
+
+        try:
+            # This regex finds a single backslash that is NOT followed by a valid JSON escape character.
+            # Valid escapes are: ", \, /, b, f, n, r, t, or uXXXX.
+            # It replaces the lone backslash with a double backslash \\ to make it a valid literal backslash in the string.
+            bad_escape_pattern = re.compile(r'\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})')
+            fixed_json_str = bad_escape_pattern.sub(r'\\\\', json_str)
+            
+            return json.loads(fixed_json_str)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Fatal: Could not parse LLM response even after sanitization. Error: {e}. Original Content: {json_str[:500]}")
+            
+        # If sanitization and parsing fail, return a fallback response
         fallback_text = language_support.get_ui_text("are_you_there", self.current_language)
         return {
             "action": "ask",
